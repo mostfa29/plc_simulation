@@ -1,0 +1,54 @@
+# ── Data (pulled from S3, never commit) ────────────────────
+data/
+*.npy
+*.tar.gz
+*.wav
+*.flac
+*.mp3
+
+# ── Model artifacts ────────────────────────────────────────
+checkpoints/
+exports/*.onnx
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# ── Logs & metrics ─────────────────────────────────────────
+logs/
+metrics/
+*.log
+wandb/
+runs/
+
+# ── Cache ──────────────────────────────────────────────────
+cache/
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.pytest_cache/
+
+# ── Environment ────────────────────────────────────────────
+.env
+.venv/
+venv/
+env/
+
+# ── IDE ────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Jupyter ────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── S3 cache tags ──────────────────────────────────────────
+*.etag
+
+# ── HuggingFace ────────────────────────────────────────────
+.huggingface/
