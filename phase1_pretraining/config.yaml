@@ -1,0 +1,115 @@
+# Phase 1: Synthetic Pretraining Configuration
+# =============================================
+# Reproduces any training run byte-for-byte.
+
+experiment:
+  name: phase1_synthetic_v1
+  seed: 42
+
+data:
+  dataset_dir: ../data/synthetic_v2
+  window_size: 2000        # 2000 timesteps @ 100Hz = 20 seconds
+  window_stride: 1000      # 50% overlap
+  raw_channels:
+    - torque_ftlbs
+    - rpm
+    - pressure_psi
+    - oil_temp_f
+    - turns
+    - hookload_klbs
+  derived_channels:
+    - d_torque_dt
+    - d_torque_dturns
+    - torque_norm
+    - turns_norm
+    - phase
+    - mask
+  total_channels: 12
+  split_ratio: [0.70, 0.15, 0.15]   # train / val / test
+  split_seed: 42
+  num_workers: 4
+  pin_memory: true
+
+model:
+  architecture: InceptionTime    # InceptionTime or ResNet
+  c_in: 12                       # input channels
+  c_out: 10                      # output classes
+  nf: 32                         # number of filters per Inception branch
+  depth: 6                       # Inception modules (2 residual blocks x 3)
+  ensemble_size: 5
+  ensemble_seeds: [0, 1, 2, 3, 4]
+
+training:
+  optimizer: AdamW
+  lr: 0.001
+  weight_decay: 0.0001
+  scheduler: CosineAnnealingLR
+  scheduler_T_max: 100
+  scheduler_eta_min: 0.00001
+  batch_size: 64
+  max_epochs: 100
+  early_stop_patience: 15
+  early_stop_metric: val_macro_f1
+  gradient_clip: 1.0
+  mixed_precision: true
+
+loss:
+  type: FocalLoss
+  gamma: 2.0
+  label_smoothing: 0.1
+  # Per-class alpha: [normal, cross_thread, galling, stripped, over_torque,
+  #                   under_torque, wrong_compound, misaligned, stall, coupling]
+  alpha: [0.35, 1.0, 1.5, 1.5, 2.0, 1.0, 2.5, 1.5, 2.0, 3.0]
+
+augmentation:
+  mixup_alpha: 0.2
+  mixup_prob: 0.5
+
+sampler:
+  type: BalancedBatchSampler
+  samples_per_class: 6    # 6 * 10 classes = 60 ~ batch_size 64
+
+# Class mapping (scenario_type -> fault_class int)
+class_map:
+  normal_makeup: 0
+  normal_casing_ltc: 0
+  normal_casing_btc: 0
+  normal_casing_premium: 0
+  normal_drill_pipe: 0
+  normal_tubing: 0
+  normal_breakout: 0
+  full_cycle: 0
+  cross_thread: 1
+  galling: 2
+  stripped_thread: 3
+  over_torque: 4
+  under_torque: 5
+  wrong_compound: 6
+  misaligned_stabbing: 7
+  stall: 8
+  coupling_makeup: 9
+
+# Rebalanced class distribution for training (Section 2.1)
+class_distribution:
+  normal_makeup: 0.500       # 2500 scenarios
+  cross_thread: 0.065        # 325
+  galling: 0.065             # 325
+  stripped_thread: 0.055     # 275
+  over_torque: 0.055         # 275
+  under_torque: 0.055        # 275
+  wrong_compound: 0.050      # 250
+  misaligned_stab: 0.055     # 275
+  stall: 0.050               # 250
+  coupling_makeup: 0.050     # 250
+
+class_names:
+  - normal_makeup
+  - cross_thread
+  - galling
+  - stripped_thread
+  - over_torque
+  - under_torque
+  - wrong_compound
+  - misaligned_stab
+  - stall
+  - coupling_makeup

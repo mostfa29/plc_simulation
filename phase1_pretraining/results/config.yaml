@@ -1,0 +1,116 @@
+augmentation:
+  mixup_alpha: 0.2
+  mixup_prob: 0.5
+class_distribution:
+  coupling_makeup: 0.05
+  cross_thread: 0.065
+  galling: 0.065
+  misaligned_stab: 0.055
+  normal_makeup: 0.5
+  over_torque: 0.055
+  stall: 0.05
+  stripped_thread: 0.055
+  under_torque: 0.055
+  wrong_compound: 0.05
+class_map:
+  coupling_makeup: 9
+  cross_thread: 1
+  full_cycle: 0
+  galling: 2
+  misaligned_stabbing: 7
+  normal_breakout: 0
+  normal_casing_btc: 0
+  normal_casing_ltc: 0
+  normal_casing_premium: 0
+  normal_drill_pipe: 0
+  normal_makeup: 0
+  normal_tubing: 0
+  over_torque: 4
+  stall: 8
+  stripped_thread: 3
+  under_torque: 5
+  wrong_compound: 6
+class_names:
+- normal_makeup
+- cross_thread
+- galling
+- stripped_thread
+- over_torque
+- under_torque
+- wrong_compound
+- misaligned_stab
+- stall
+- coupling_makeup
+data:
+  dataset_dir: ../data/synthetic_v2
+  derived_channels:
+  - d_torque_dt
+  - d_torque_dturns
+  - torque_norm
+  - turns_norm
+  - phase
+  - mask
+  num_workers: 4
+  pin_memory: true
+  raw_channels:
+  - torque_ftlbs
+  - rpm
+  - pressure_psi
+  - oil_temp_f
+  - turns
+  - hookload_klbs
+  split_ratio:
+  - 0.7
+  - 0.15
+  - 0.15
+  split_seed: 42
+  total_channels: 12
+  window_size: 2000
+  window_stride: 1000
+experiment:
+  name: phase1_synthetic_v1
+  seed: 42
+loss:
+  alpha:
+  - 0.35
+  - 1.0
+  - 1.5
+  - 1.5
+  - 2.0
+  - 1.0
+  - 2.5
+  - 1.5
+  - 2.0
+  - 3.0
+  gamma: 2.0
+  label_smoothing: 0.1
+  type: FocalLoss
+model:
+  architecture: ResNet
+  c_in: 12
+  c_out: 10
+  depth: 6
+  ensemble_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  ensemble_size: 5
+  nf: 32
+sampler:
+  samples_per_class: 6
+  type: BalancedBatchSampler
+training:
+  batch_size: 64
+  early_stop_metric: val_macro_f1
+  early_stop_patience: 15
+  gradient_clip: 1.0
+  lr: 0.001
+  max_epochs: 30
+  mixed_precision: true
+  optimizer: AdamW
+  scheduler: CosineAnnealingLR
+  scheduler_T_max: 100
+  scheduler_eta_min: 1.0e-05
+  weight_decay: 0.0001

@@ -1,0 +1,395 @@
+"""
+Dataset & Preprocessing Pipeline for Phase 1
+===============================================
+Loads Parquet/CSV scenarios, computes derived features, applies sliding windows,
+normalizes, and yields (X, y) for PyTorch training.
+
+Preprocessing pipeline (Section 3.1 — exact order matters):
+  1. Load scenario file (Parquet or CSV)
+  2. Select 6 raw channels
+  3. Compute 6 derived channels -> 12 total
+  4. Physics normalization (torque / target, turns / expected)
+  5. Sliding window (2000 samples, stride 1000)
+  6. Zero-pad short windows (set mask=0)
+  7. Z-score normalization (TRAINING SET mean/std only!)
+  8. Assign label from manifest
+
+CRITICAL: Z-score mean/std computed from TRAINING split only.
+          Never leak test/val statistics into training normalization.
+"""
+import json
+import numpy as np
+import pandas as pd
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+
+import torch
+from torch.utils.data import Dataset
+
+from features import (
+    compute_derived_channels,
+    NUM_RAW_CHANNELS, NUM_TOTAL_CHANNELS,
+    CH_MASK,
+)
+
+
+# Raw sensor columns to extract (order matters — matches features.py)
+RAW_COLUMNS = [
+    'torque_ftlbs',
+    'rpm',
+    'pressure_psi',
+    'oil_temp_f',
+    'turns',
+    'hookload_klbs',
+]
+
+# Connection state column (used for phase indicator)
+STATE_COLUMN = 'connection_state'
+
+
+@dataclass
+class NormParams:
+    """Per-channel normalization parameters (Z-score)."""
+    mean: np.ndarray   # [12]
+    std: np.ndarray    # [12]
+
+    def save(self, path: str):
+        data = {
+            'mean': self.mean.tolist(),
+            'std': self.std.tolist(),
+        }
+        with open(path, 'w') as f:
+            json.dump(data, f, indent=2)
+
+    @classmethod
+    def load(cls, path: str) -> 'NormParams':
+        with open(path) as f:
+            data = json.load(f)
+        return cls(
+            mean=np.array(data['mean'], dtype=np.float32),
+            std=np.array(data['std'], dtype=np.float32),
+        )
+
+
+def load_scenario(filepath: Path) -> pd.DataFrame:
+    """Load a single scenario from Parquet or CSV."""
+    if filepath.suffix == '.parquet':
+        return pd.read_parquet(filepath, columns=RAW_COLUMNS + [STATE_COLUMN])
+    else:
+        return pd.read_csv(filepath, usecols=RAW_COLUMNS + [STATE_COLUMN])
+
+
+def scenario_to_windows(filepath: Path,
+                         target_torque: float,
+                         expected_turns: float,
+                         window_size: int = 2000,
+                         stride: int = 1000,
+                         dt: float = 0.01) -> np.ndarray:
+    """Load a scenario file and convert to windowed array.
+
+    Returns:
+        Array [W, window_size, 12] of windowed feature data.
+    """
+    df = load_scenario(filepath)
+
+    # Extract raw channels [N, 6]
+    raw = df[RAW_COLUMNS].values.astype(np.float32)
+    connection_state = df[STATE_COLUMN].values.astype(np.int32)
+
+    # Compute derived channels -> [N, 12]
+    features = compute_derived_channels(
+        raw, connection_state, target_torque, expected_turns, dt=dt
+    )
+
+    n = features.shape[0]
+    windows = []
+
+    # Sliding window with stride
+    start = 0
+    while start < n:
+        end = start + window_size
+        if end <= n:
+            # Full window
+            windows.append(features[start:end])
+        else:
+            # Pad short last window
+            window = np.zeros((window_size, NUM_TOTAL_CHANNELS), dtype=np.float32)
+            actual_len = n - start
+            window[:actual_len] = features[start:n]
+            # Set mask=0 for padded region
+            window[actual_len:, CH_MASK] = 0.0
+            windows.append(window)
+        start += stride
+
+    if not windows:
+        # Edge case: scenario shorter than window_size
+        window = np.zeros((window_size, NUM_TOTAL_CHANNELS), dtype=np.float32)
+        actual_len = min(n, window_size)
+        window[:actual_len] = features[:actual_len]
+        window[actual_len:, CH_MASK] = 0.0
+        windows.append(window)
+
+    return np.stack(windows)  # [W, window_size, 12]
+
+
+def build_dataset_index(manifest: pd.DataFrame,
+                         scenario_ids: np.ndarray,
+                         sensor_dir: Path,
+                         class_map: Dict[str, int],
+                         window_size: int = 2000,
+                         stride: int = 1000) -> Tuple[List[np.ndarray], np.ndarray, np.ndarray]:
+    """Build windowed dataset from manifest for given scenario IDs.
+
+    Args:
+        manifest: Full manifest DataFrame.
+        scenario_ids: Array of scenario indices to include.
+        sensor_dir: Path to sensor/ directory.
+        class_map: Mapping from scenario_type to fault_class int.
+        window_size: Sliding window size.
+        stride: Sliding window stride.
+
+    Returns:
+        (all_windows, all_labels, window_to_scenario):
+          all_windows: list of [W_i, window_size, 12] arrays per scenario
+          all_labels: [total_windows] int array of class labels
+          window_to_scenario: [total_windows] int array mapping window -> scenario_id
+    """
+    all_windows = []
+    all_labels = []
+    all_scenario_ids = []
+
+    for _, row in manifest[manifest['scenario_id'].isin(scenario_ids)].iterrows():
+        filepath = sensor_dir / row['filename']
+        if not filepath.exists():
+            continue
+
+        target_torque = float(row.get('target_torque_ftlbs', 5000))
+        expected_turns = float(row.get('expected_turns', 5.0))
+        scenario_type = row['scenario_type']
+        fault_class = class_map.get(scenario_type, 0)
+
+        windows = scenario_to_windows(
+            filepath, target_torque, expected_turns,
+            window_size=window_size, stride=stride,
+        )
+
+        num_windows = windows.shape[0]
+        all_windows.append(windows)
+        all_labels.extend([fault_class] * num_windows)
+        all_scenario_ids.extend([int(row['scenario_id'])] * num_windows)
+
+    return all_windows, np.array(all_labels), np.array(all_scenario_ids)
+
+
+def compute_norm_params(windows_list: List[np.ndarray]) -> NormParams:
+    """Compute per-channel mean and std from TRAINING windows only.
+
+    CRITICAL: Only call this on training data. Never include val/test.
+
+    Args:
+        windows_list: List of [W_i, window_size, 12] arrays.
+
+    Returns:
+        NormParams with mean [12] and std [12].
+    """
+    # Concatenate all windows into [total_samples, 12]
+    all_data = np.concatenate([w.reshape(-1, NUM_TOTAL_CHANNELS)
+                                for w in windows_list], axis=0)
+
+    mean = np.mean(all_data, axis=0).astype(np.float32)
+    std = np.std(all_data, axis=0).astype(np.float32)
+
+    # Prevent division by zero (mask channel has std=0 if all 1s)
+    std = np.where(std < 1e-8, 1.0, std)
+
+    return NormParams(mean=mean, std=std)
+
+
+def apply_normalization(windows: np.ndarray, norm: NormParams) -> np.ndarray:
+    """Apply Z-score normalization: (x - mean) / std.
+
+    Does NOT normalize the mask channel (channel 11).
+
+    Args:
+        windows: [W, window_size, 12].
+        norm: NormParams from training set.
+
+    Returns:
+        Normalized [W, window_size, 12].
+    """
+    normalized = (windows - norm.mean) / norm.std
+
+    # Restore mask channel (should be 0 or 1, not normalized)
+    normalized[:, :, CH_MASK] = windows[:, :, CH_MASK]
+
+    return normalized.astype(np.float32)
+
+
+class Phase1Dataset(Dataset):
+    """PyTorch Dataset for Phase 1 pretraining.
+
+    Loads pre-computed, normalized, windowed data.
+    Returns (X, y) where X is [12, 2000] (channels-first) and y is int.
+    """
+
+    def __init__(self, windows: np.ndarray, labels: np.ndarray):
+        """
+        Args:
+            windows: [total_windows, window_size, 12] float32.
+            labels: [total_windows] int64.
+        """
+        self.windows = windows
+        self.labels = labels
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+        # Transpose to channels-first: [12, 2000] for Conv1d
+        x = torch.from_numpy(self.windows[idx]).T  # [12, window_size]
+        y = int(self.labels[idx])
+        return x, y
+
+
+def create_splits(manifest: pd.DataFrame,
+                   class_map: Dict[str, int],
+                   split_ratio: Tuple[float, float, float] = (0.70, 0.15, 0.15),
+                   seed: int = 42) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Stratified scenario-level split into train/val/test.
+
+    Splits at the SCENARIO level (not window level) to prevent data leakage.
+    Stratified by fault_class to ensure proportional representation.
+
+    Args:
+        manifest: DataFrame with 'scenario_id' and 'scenario_type' columns.
+        class_map: Mapping scenario_type -> fault_class int.
+        split_ratio: (train_frac, val_frac, test_frac).
+        seed: Random seed.
+
+    Returns:
+        (train_ids, val_ids, test_ids) — arrays of scenario_id values.
+    """
+    rng = np.random.RandomState(seed)
+
+    # Assign fault_class to each scenario
+    manifest = manifest.copy()
+    manifest['fault_class'] = manifest['scenario_type'].map(class_map).fillna(0).astype(int)
+
+    # Group by class
+    class_groups = manifest.groupby('fault_class')['scenario_id'].apply(list).to_dict()
+
+    train_ids, val_ids, test_ids = [], [], []
+    train_frac, val_frac, _ = split_ratio
+
+    for cls, ids in class_groups.items():
+        ids = np.array(ids)
+        rng.shuffle(ids)
+
+        n = len(ids)
+        n_train = max(1, int(n * train_frac))
+        n_val = max(1, int(n * val_frac))
+
+        train_ids.extend(ids[:n_train].tolist())
+        val_ids.extend(ids[n_train:n_train + n_val].tolist())
+        test_ids.extend(ids[n_train + n_val:].tolist())
+
+    return np.array(train_ids), np.array(val_ids), np.array(test_ids)
+
+
+def prepare_datasets(dataset_dir: str,
+                      class_map: Dict[str, int],
+                      window_size: int = 2000,
+                      stride: int = 1000,
+                      split_ratio: Tuple[float, float, float] = (0.70, 0.15, 0.15),
+                      split_seed: int = 42,
+                      norm_params_path: Optional[str] = None,
+                      ) -> Tuple[Phase1Dataset, Phase1Dataset, Phase1Dataset, NormParams]:
+    """Full pipeline: load manifest -> split -> window -> normalize -> Dataset.
+
+    Args:
+        dataset_dir: Path to synthetic_v2/ directory.
+        class_map: scenario_type -> fault_class mapping.
+        window_size: Sliding window size.
+        stride: Window stride.
+        split_ratio: Train/val/test fractions.
+        split_seed: Random seed for split.
+        norm_params_path: If provided, save normalization params here.
+
+    Returns:
+        (train_dataset, val_dataset, test_dataset, norm_params)
+    """
+    dataset_dir = Path(dataset_dir)
+    sensor_dir = dataset_dir / 'sensor'
+
+    # Load manifest
+    manifest_path = dataset_dir / 'manifest.parquet'
+    if manifest_path.exists():
+        manifest = pd.read_parquet(manifest_path)
+    else:
+        manifest = pd.read_csv(dataset_dir / 'manifest.csv')
+
+    # Ensure scenario_id column exists
+    if 'scenario_id' not in manifest.columns:
+        if 'index' in manifest.columns:
+            manifest['scenario_id'] = manifest['index']
+        else:
+            manifest['scenario_id'] = range(len(manifest))
+
+    # Split
+    train_ids, val_ids, test_ids = create_splits(
+        manifest, class_map, split_ratio, split_seed
+    )
+
+    # Build windows for each split
+    print(f"Building training windows ({len(train_ids)} scenarios)...")
+    train_windows, train_labels, _ = build_dataset_index(
+        manifest, train_ids, sensor_dir, class_map, window_size, stride
+    )
+
+    print(f"Building validation windows ({len(val_ids)} scenarios)...")
+    val_windows, val_labels, _ = build_dataset_index(
+        manifest, val_ids, sensor_dir, class_map, window_size, stride
+    )
+
+    print(f"Building test windows ({len(test_ids)} scenarios)...")
+    test_windows, test_labels, _ = build_dataset_index(
+        manifest, test_ids, sensor_dir, class_map, window_size, stride
+    )
+
+    # Concatenate windows
+    train_all = np.concatenate(train_windows) if train_windows else np.empty((0, window_size, NUM_TOTAL_CHANNELS))
+    val_all = np.concatenate(val_windows) if val_windows else np.empty((0, window_size, NUM_TOTAL_CHANNELS))
+    test_all = np.concatenate(test_windows) if test_windows else np.empty((0, window_size, NUM_TOTAL_CHANNELS))
+
+    # Compute normalization from TRAINING DATA ONLY
+    print("Computing normalization parameters from training data...")
+    norm = compute_norm_params(train_windows if train_windows else [train_all])
+
+    # Apply normalization to all splits
+    train_all = apply_normalization(train_all, norm)
+    val_all = apply_normalization(val_all, norm)
+    test_all = apply_normalization(test_all, norm)
+
+    if norm_params_path:
+        norm.save(norm_params_path)
+        print(f"Saved normalization params to {norm_params_path}")
+
+    # Save split indices
+    split_path = dataset_dir / 'split_indices.json'
+    with open(split_path, 'w') as f:
+        json.dump({
+            'train': train_ids.tolist(),
+            'val': val_ids.tolist(),
+            'test': test_ids.tolist(),
+        }, f)
+    print(f"Saved split indices to {split_path}")
+
+    print(f"Dataset sizes: train={len(train_labels)}, val={len(val_labels)}, test={len(test_labels)}")
+
+    return (
+        Phase1Dataset(train_all, train_labels),
+        Phase1Dataset(val_all, val_labels),
+        Phase1Dataset(test_all, test_labels),
+        norm,
+    )

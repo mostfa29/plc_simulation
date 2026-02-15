@@ -27,6 +27,10 @@ Usage:
   # Single scenario for debugging
   python -m generate_dataset --single normal_casing_ltc --pipe 7in_23lb_N80_LTC
 
+  # Phase 1 production dataset (Parquet, rebalanced 50/50 normal/fault)
+  python generate_dataset.py --count 5000 --output ./data/synthetic_v2 \
+    --output-format parquet --class-balance rebalanced --seed 42
+
 Output structure:
   data/synthetic/
   ├── sensor/               # Noisy sensor data (for AI training)
@@ -49,7 +53,9 @@ import sys
 import time
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, List
+
+import numpy as np
 
 from config import SimConfig, MachineType, ALL_CONNECTIONS, PIPE_CATALOG, PREMIUM_CATALOG, DRILL_PIPE_CATALOG
 from scenario import ScenarioGenerator, ScenarioType
@@ -76,6 +82,77 @@ def _parse_machine_types(machine_type_str: Optional[str]) -> Optional[list]:
         sys.exit(1)
 
 
+# Rebalanced class distribution for ML training (Section 2.1)
+# 50/50 normal/fault split with inverse frequency weighting for rare faults.
+REBALANCED_DISTRIBUTION: Dict[str, float] = {
+    'normal_casing_ltc': 0.15,
+    'normal_casing_btc': 0.10,
+    'normal_casing_premium': 0.08,
+    'normal_drill_pipe': 0.10,
+    'normal_tubing': 0.04,
+    'full_cycle': 0.03,
+    'cross_thread': 0.065,
+    'galling': 0.065,
+    'stripped_thread': 0.055,
+    'over_torque': 0.055,
+    'under_torque': 0.055,
+    'wrong_compound': 0.050,
+    'misaligned_stabbing': 0.055,
+    'stall': 0.050,
+    'stick_slip': 0.015,
+    'multi_connection': 0.010,
+    'washout': 0.005,
+    'connection_jump': 0.005,
+}
+
+# Fault class mapping (scenario_type -> numeric class for ML)
+FAULT_CLASS_MAP: Dict[str, int] = {
+    'normal_casing_ltc': 0,
+    'normal_casing_btc': 0,
+    'normal_casing_premium': 0,
+    'normal_drill_pipe': 0,
+    'normal_tubing': 0,
+    'normal_breakout': 0,
+    'full_cycle': 0,
+    'cross_thread': 1,
+    'galling': 2,
+    'stripped_thread': 3,
+    'over_torque': 4,
+    'under_torque': 5,
+    'wrong_compound': 6,
+    'misaligned_stabbing': 7,
+    'stall': 8,
+    'multi_connection': 0,
+    'stick_slip': 1,
+    'connection_jump': 1,
+    'washout': 4,
+    'cold_start': 0,
+    'hot_environment': 0,
+    'staged_fault': 1,
+}
+
+
+def _save_parquet(data: List[dict], filepath: Path):
+    """Save list of dicts as Parquet file using pyarrow."""
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError:
+        # Fallback to CSV if pyarrow not installed
+        logger.warning("pyarrow not installed, falling back to CSV")
+        filepath = filepath.with_suffix('.csv')
+        if data:
+            with open(filepath, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=data[0].keys())
+                writer.writeheader()
+                writer.writerows(data)
+        return
+
+    import pandas as pd
+    df = pd.DataFrame(data)
+    df.to_parquet(filepath, index=False, engine='pyarrow')
+
+
 def _filter_pipes_by_connection(connection_type: Optional[str]) -> Optional[list]:
     """Filter pipe catalog by connection type (LTC, BTC, STC, PREMIUM, DRILL_PIPE)."""
     if not connection_type:
@@ -99,12 +176,26 @@ def generate_batch(args):
     sensor_dir = output_dir / 'sensor'
     truth_dir = output_dir / 'truth'
     events_dir = output_dir / 'events'
+    use_parquet = getattr(args, 'output_format', 'csv') == 'parquet'
+    file_ext = '.parquet' if use_parquet else '.csv'
 
     for d in [sensor_dir, truth_dir, events_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
     # Initialize
     gen = ScenarioGenerator(seed=args.seed)
+
+    # Apply rebalanced distribution if requested
+    class_balance = getattr(args, 'class_balance', 'default')
+    if class_balance == 'rebalanced':
+        gen.weights = {}
+        for stype_str, weight in REBALANCED_DISTRIBUTION.items():
+            try:
+                gen.weights[ScenarioType(stype_str)] = weight
+            except ValueError:
+                pass
+        logger.info("Using REBALANCED class distribution (50/50 normal/fault)")
+
     runner = SimulationRunner(csv_output_rate_hz=args.output_rate)
 
     # Build pipe filter
@@ -133,36 +224,46 @@ def generate_batch(args):
     start_time = time.monotonic()
 
     for i, scenario in enumerate(scenarios):
-        base_name = f"scenario_{i:04d}_{scenario.scenario_type.value}"
+        base_name = f"scenario_{i:04d}"
 
         logger.info(f"[{i+1}/{len(scenarios)}] {scenario.label}")
 
         try:
             result = runner.run(scenario)
 
-            # Save data
-            runner.save_csv(result, sensor_dir / f"{base_name}.csv", data_type='sensor')
-            runner.save_csv(result, truth_dir / f"{base_name}.csv", data_type='truth')
-            if result.events:
-                runner.save_events(result, events_dir / f"{base_name}.csv")
+            # Save data (Parquet or CSV)
+            if use_parquet:
+                _save_parquet(result.sensor_data, sensor_dir / f"{base_name}{file_ext}")
+                _save_parquet(result.ground_truth, truth_dir / f"{base_name}{file_ext}")
+                if result.events:
+                    _save_parquet(result.events, events_dir / f"{base_name}{file_ext}")
+            else:
+                runner.save_csv(result, sensor_dir / f"{base_name}{file_ext}", data_type='sensor')
+                runner.save_csv(result, truth_dir / f"{base_name}{file_ext}", data_type='truth')
+                if result.events:
+                    runner.save_events(result, events_dir / f"{base_name}{file_ext}")
 
-            # Update manifest
+            # Manifest entry (Section 2.6 schema)
+            fault_class = FAULT_CLASS_MAP.get(scenario.scenario_type.value, 0)
             manifest.append({
-                'index': i,
-                'filename': f"{base_name}.csv",
+                'scenario_id': i,
+                'filename': f"{base_name}{file_ext}",
                 'scenario_type': scenario.scenario_type.value,
+                'fault_class': fault_class,
                 'machine_type': scenario.machine_type.value,
-                'pipe': scenario.pipe.name,
+                'pipe_name': scenario.pipe.name,
                 'connection_type': scenario.pipe.connection_type,
+                'pipe_od_in': scenario.pipe.od_inches,
+                'target_torque_ftlbs': scenario.target_torque or scenario.pipe.optimum_torque_ftlbs,
+                'expected_turns': scenario.pipe.turns_to_shoulder,
                 'seed': scenario.seed,
-                'samples': result.metadata['total_samples'],
-                'duration_s': f"{result.metadata['duration_s']:.2f}",
-                'peak_torque': f"{result.metadata['peak_torque_ftlbs']:.0f}",
-                'peak_pressure': f"{result.metadata['peak_pressure_psi']:.0f}",
-                'peak_rpm': f"{result.metadata['peak_rpm']:.1f}",
-                'shoulder_torque': f"{result.metadata.get('shoulder_torque_ftlbs', 0):.0f}",
-                'fault_code': result.metadata.get('fault_code', 0),
+                'num_samples': result.metadata['total_samples'],
+                'duration_s': round(result.metadata['duration_s'], 2),
+                'peak_torque_ftlbs': round(result.metadata['peak_torque_ftlbs'], 1),
+                'peak_rpm': round(result.metadata['peak_rpm'], 1),
+                'shoulder_torque_ftlbs': round(result.metadata.get('shoulder_torque_ftlbs', 0), 1),
                 'has_fault': result.metadata['has_fault'],
+                'fault_code': result.metadata.get('fault_code', 0),
                 'label': scenario.label,
             })
 
@@ -173,13 +274,19 @@ def generate_batch(args):
         except Exception as e:
             logger.error(f"  FAILED: {e}", exc_info=True)
             manifest.append({
-                'index': i, 'filename': f"{base_name}.csv",
+                'scenario_id': i, 'filename': f"{base_name}{file_ext}",
                 'scenario_type': scenario.scenario_type.value,
+                'fault_class': FAULT_CLASS_MAP.get(scenario.scenario_type.value, 0),
                 'machine_type': scenario.machine_type.value,
-                'pipe': scenario.pipe.name,
+                'pipe_name': scenario.pipe.name,
                 'connection_type': scenario.pipe.connection_type,
+                'pipe_od_in': scenario.pipe.od_inches,
+                'target_torque_ftlbs': 0, 'expected_turns': 0,
                 'seed': scenario.seed,
-                'samples': 0, 'duration_s': 0, 'has_fault': False,
+                'num_samples': 0, 'duration_s': 0,
+                'peak_torque_ftlbs': 0, 'peak_rpm': 0,
+                'shoulder_torque_ftlbs': 0,
+                'has_fault': False, 'fault_code': 0,
                 'label': f"FAILED: {e}",
             })
 
@@ -187,6 +294,9 @@ def generate_batch(args):
 
     # Save manifest
     if manifest:
+        if use_parquet:
+            _save_parquet(manifest, output_dir / 'manifest.parquet')
+        # Always save CSV manifest too (lightweight, human-readable)
         manifest_path = output_dir / 'manifest.csv'
         with open(manifest_path, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=manifest[0].keys())
@@ -198,6 +308,20 @@ def generate_batch(args):
     stats_path = output_dir / 'stats.txt'
     with open(stats_path, 'w') as f:
         f.write(stats)
+
+    # Save generation config for reproducibility
+    gen_config = {
+        'count': args.count,
+        'seed': args.seed,
+        'output_format': 'parquet' if use_parquet else 'csv',
+        'class_balance': class_balance,
+        'output_rate_hz': args.output_rate,
+        'pipe_filter': args.pipe,
+        'machine_type': args.machine_type,
+        'connection_type': args.connection_type,
+    }
+    with open(output_dir / 'config.json', 'w') as f:
+        json.dump(gen_config, f, indent=2)
 
     print(f"\n{'='*60}")
     print(stats)
@@ -315,10 +439,10 @@ def _compute_stats(manifest, elapsed, total_samples, fault_count, scenarios):
     from collections import Counter
 
     type_counts = Counter(m['scenario_type'] for m in manifest)
-    pipe_counts = Counter(m['pipe'] for m in manifest)
+    pipe_counts = Counter(m['pipe_name'] for m in manifest)
     machine_counts = Counter(m.get('machine_type', 'unknown') for m in manifest)
     conn_type_counts = Counter(m.get('connection_type', 'unknown') for m in manifest)
-    successful = sum(1 for m in manifest if m.get('samples', 0) and int(m.get('samples', 0)) > 0)
+    successful = sum(1 for m in manifest if m.get('num_samples', 0) and int(m.get('num_samples', 0)) > 0)
 
     lines = [
         f"TopDrive AI Synthetic Dataset Statistics",
@@ -386,6 +510,12 @@ Examples:
                         help='Run in real-time with Modbus server')
     parser.add_argument('--modbus-port', type=int, default=5020,
                         help='Modbus TCP port (default: 5020)')
+    parser.add_argument('--output-format', type=str, default='csv',
+                        choices=['csv', 'parquet'],
+                        help='Output file format (default: csv)')
+    parser.add_argument('--class-balance', type=str, default='default',
+                        choices=['default', 'rebalanced'],
+                        help='Class distribution: default (field 65/35) or rebalanced (50/50 normal/fault)')
 
     args = parser.parse_args()
 
