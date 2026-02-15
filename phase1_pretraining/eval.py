@@ -212,7 +212,8 @@ def save_confusion_matrix_text(cm: np.ndarray, class_names: List[str]) -> str:
 def generate_report(results_dir: Path, class_names: List[str],
                      macro_f1: float, per_class: List[Dict],
                      criteria: List[Dict], cm: np.ndarray,
-                     ensemble_size: int):
+                     ensemble_size: int,
+                     model_label: str = "InceptionTime ensemble"):
     """Generate Phase 1 evaluation report as Markdown."""
     report_path = results_dir / 'phase1_report.md'
 
@@ -220,7 +221,7 @@ def generate_report(results_dir: Path, class_names: List[str],
         '# Phase 1: Synthetic Pretraining - Evaluation Report',
         '',
         '## Summary',
-        f'- **Model**: InceptionTime ensemble ({ensemble_size} members)',
+        f'- **Model**: {model_label}',
         f'- **Macro F1**: {macro_f1:.4f}',
         f'- **Overall**: {"PASS" if macro_f1 > 0.85 else "NEEDS WORK"}',
         '',
@@ -271,8 +272,9 @@ def main():
     parser.add_argument('--config', type=str, default='config.yaml')
     parser.add_argument('--checkpoint-dir', type=str, default='./results/checkpoints')
     parser.add_argument('--output-dir', type=str, default='./results')
-    parser.add_argument('--model', type=str, default='InceptionTime',
-                        choices=['InceptionTime', 'ResNet'])
+    parser.add_argument('--model', type=str, default=None,
+                        choices=['InceptionTime', 'ResNet'],
+                        help='Model to evaluate (auto-detects from checkpoints if not set)')
     parser.add_argument('--device', type=str, default=None)
     args = parser.parse_args()
 
@@ -320,25 +322,47 @@ def main():
         shuffle=False,
     )
 
-    # Load model(s)
+    # Load model(s) — auto-detect if --model not specified
     c_in = config['model']['c_in']
     c_out = config['model']['c_out']
     nf = config['model']['nf']
 
-    if args.model == 'ResNet':
-        checkpoint = torch.load(
-            checkpoint_dir / 'resnet_baseline.pt',
-            map_location=device, weights_only=False
-        )
+    model_type = args.model
+    if model_type is None:
+        # Auto-detect: check which checkpoints exist
+        has_resnet = (checkpoint_dir / 'resnet_baseline.pt').exists()
+        has_inception = (checkpoint_dir / 'inception_0_best.pt').exists()
+        if has_inception:
+            model_type = 'InceptionTime'
+        elif has_resnet:
+            model_type = 'ResNet'
+        else:
+            logger.error(f"No checkpoints found in {checkpoint_dir}")
+            logger.error("Expected resnet_baseline.pt or inception_*_best.pt")
+            return
+        logger.info(f"Auto-detected model: {model_type}")
+
+    if model_type == 'ResNet':
+        resnet_path = checkpoint_dir / 'resnet_baseline.pt'
+        if not resnet_path.exists():
+            logger.error(f"ResNet checkpoint not found: {resnet_path}")
+            return
+        checkpoint = torch.load(resnet_path, map_location=device, weights_only=False)
         model = ResNetBaseline(c_in, c_out)
         model.load_state_dict(checkpoint['model_state_dict'])
         model.to(device)
         model.eval()
         models = [model]
-        ensemble_size = 1
+        model_label = "ResNet baseline"
+        logger.info(f"Loaded ResNet: val_f1={checkpoint.get('val_macro_f1', 'N/A')}")
     else:
         ensemble_size = config['model'].get('ensemble_size', 5)
         models = load_ensemble(checkpoint_dir, device, c_in, c_out, nf, ensemble_size)
+        model_label = f"InceptionTime ensemble ({len(models)} members)"
+        if not models:
+            logger.error("No InceptionTime checkpoints found. Did you train the ensemble?")
+            logger.error("To evaluate the ResNet baseline, run: python eval.py --config config.yaml --model ResNet")
+            return
 
     logger.info(f"Loaded {len(models)} model(s)")
 
@@ -381,7 +405,8 @@ def main():
             row = {'class_name': name, **m}
             writer.writerow(row)
 
-    generate_report(output_dir, class_names, macro_f1, per_class, criteria, cm, len(models))
+    generate_report(output_dir, class_names, macro_f1, per_class, criteria, cm,
+                    len(models), model_label=model_label)
 
     # Exit code based on macro F1
     overall_pass = all(c['status'] == 'PASS' for c in criteria[:4])
