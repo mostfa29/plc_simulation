@@ -48,9 +48,28 @@ NUM_TOTAL_CHANNELS = 12
 SLOPE_CLIP_MIN = -1e4
 SLOPE_CLIP_MAX = 1e4
 
+# Phase mapping: ConnectionState enum int -> simplified phase 0-5
+_STATE_TO_PHASE = np.zeros(14, dtype=np.float32)
+_STATE_TO_PHASE[0] = 0   # IDLE
+_STATE_TO_PHASE[1] = 0   # APPROACH
+_STATE_TO_PHASE[2] = 1   # SPIN_IN
+_STATE_TO_PHASE[3] = 2   # SHOULDER
+_STATE_TO_PHASE[4] = 3   # POWER_TIGHT
+_STATE_TO_PHASE[5] = 3   # HOLD
+_STATE_TO_PHASE[6] = 1   # BREAKOUT (reverse)
+_STATE_TO_PHASE[7] = 1   # BACKOFF (reverse)
+_STATE_TO_PHASE[8] = 5   # FAULT
+_STATE_TO_PHASE[9] = 4   # COMPLETE
+_STATE_TO_PHASE[10] = 5  # STALL
+_STATE_TO_PHASE[11] = 5  # E_STOP
+_STATE_TO_PHASE[12] = 5  # FAULT_RECOVERY
+_STATE_TO_PHASE[13] = 1  # HANDOFF
+
 
 def compute_d_torque_dt(torque: np.ndarray, dt: float = 0.01, k: int = 2) -> np.ndarray:
     """Central difference torque rate: (T[i+k] - T[i-k]) / (2k * dt).
+
+    Vectorized numpy implementation.
 
     Args:
         torque: 1D array of torque values [N].
@@ -62,17 +81,19 @@ def compute_d_torque_dt(torque: np.ndarray, dt: float = 0.01, k: int = 2) -> np.
     """
     n = len(torque)
     result = np.zeros(n, dtype=np.float32)
+
+    if n <= 2 * k:
+        return result
+
+    # Central difference for interior points
     denominator = 2.0 * k * dt
+    result[k:n-k] = (torque[2*k:] - torque[:n-2*k]) / denominator
 
-    for i in range(k, n - k):
-        result[i] = (torque[i + k] - torque[i - k]) / denominator
+    # Forward difference for leading edge
+    result[:k] = (torque[k:2*k] - torque[:k]) / (k * dt)
 
-    # Edges: forward/backward difference
-    for i in range(min(k, n)):
-        if i + 1 < n:
-            result[i] = (torque[min(i + k, n - 1)] - torque[i]) / (k * dt)
-    for i in range(max(0, n - k), n):
-        result[i] = (torque[i] - torque[max(i - k, 0)]) / (k * dt)
+    # Backward difference for trailing edge
+    result[n-k:] = (torque[n-k:] - torque[n-2*k:n-k]) / (k * dt)
 
     return result
 
@@ -86,7 +107,7 @@ def compute_d_torque_dturns(torque: np.ndarray, turns: np.ndarray,
       - Stripped thread: slope plateau/drop
       - Cross-thread: extreme slope at low turns
 
-    Handles division by zero when RPM=0 (turns not changing).
+    Vectorized numpy implementation with zero-division protection.
 
     Args:
         torque: 1D array [N].
@@ -100,27 +121,23 @@ def compute_d_torque_dturns(torque: np.ndarray, turns: np.ndarray,
     n = len(torque)
     result = np.zeros(n, dtype=np.float32)
 
-    for i in range(k, n - k):
-        d_torque = torque[i + k] - torque[i - k]
-        d_turns = turns[i + k] - turns[i - k]
-        if abs(d_turns) > eps:
-            result[i] = d_torque / d_turns
-        # else: result stays 0.0 (stall/idle)
+    if n <= 2 * k:
+        return result
+
+    d_torque = torque[2*k:] - torque[:n-2*k]
+    d_turns = turns[2*k:] - turns[:n-2*k]
+
+    # Safe division: only divide where d_turns is nonzero
+    safe_mask = np.abs(d_turns) > eps
+    result[k:n-k] = np.where(safe_mask, d_torque / np.where(safe_mask, d_turns, 1.0), 0.0)
 
     return np.clip(result, SLOPE_CLIP_MIN, SLOPE_CLIP_MAX)
 
 
 def compute_phase_indicator(connection_state: np.ndarray) -> np.ndarray:
-    """Map connection_state enum to simplified phase indicator.
+    """Map connection_state enum to simplified phase indicator (0-5).
 
-    Mapping (from physics_engine.ConnectionState):
-      IDLE(0), APPROACH(1)                    -> 0 (idle/approach)
-      SPIN_IN(2), HANDOFF(13)                 -> 1 (spin-in)
-      SHOULDER(3)                             -> 2 (shoulder)
-      POWER_TIGHT(4), HOLD(5)                -> 3 (power-tight)
-      COMPLETE(9)                             -> 4 (complete)
-      FAULT(8), STALL(10), E_STOP(11), etc.  -> 5 (fault)
-      BREAKOUT(6), BACKOFF(7)                -> 1 (reverse spin)
+    Vectorized lookup table implementation.
 
     Args:
         connection_state: 1D int array [N] of ConnectionState values.
@@ -128,27 +145,9 @@ def compute_phase_indicator(connection_state: np.ndarray) -> np.ndarray:
     Returns:
         1D float32 array [N] with phase 0-5.
     """
-    state_to_phase = {
-        0: 0,   # IDLE
-        1: 0,   # APPROACH
-        2: 1,   # SPIN_IN
-        3: 2,   # SHOULDER
-        4: 3,   # POWER_TIGHT
-        5: 3,   # HOLD
-        6: 1,   # BREAKOUT (reverse)
-        7: 1,   # BACKOFF (reverse)
-        8: 5,   # FAULT
-        9: 4,   # COMPLETE
-        10: 5,  # STALL
-        11: 5,  # E_STOP
-        12: 5,  # FAULT_RECOVERY
-        13: 1,  # HANDOFF
-    }
-
-    result = np.zeros(len(connection_state), dtype=np.float32)
-    for i, state in enumerate(connection_state):
-        result[i] = state_to_phase.get(int(state), 0)
-    return result
+    # Clip to valid range and use lookup table
+    clipped = np.clip(connection_state.astype(np.int32), 0, len(_STATE_TO_PHASE) - 1)
+    return _STATE_TO_PHASE[clipped]
 
 
 def compute_derived_channels(raw: np.ndarray,
@@ -172,7 +171,7 @@ def compute_derived_channels(raw: np.ndarray,
     torque = raw[:, CH_TORQUE]
     turns = raw[:, CH_TURNS]
 
-    # Derived channels
+    # Derived channels (all vectorized)
     d_torque_dt = compute_d_torque_dt(torque, dt=dt)
     d_torque_dturns = compute_d_torque_dturns(torque, turns)
     torque_norm = torque / max(target_torque, 1.0)

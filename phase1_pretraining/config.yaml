@@ -3,7 +3,7 @@
 # Reproduces any training run byte-for-byte.
 
 experiment:
-  name: phase1_synthetic_v1
+  name: phase1_synthetic_v2
   seed: 42
 
 data:
@@ -27,13 +27,13 @@ data:
   total_channels: 12
   split_ratio: [0.70, 0.15, 0.15]   # train / val / test
   split_seed: 42
-  num_workers: 4
-  pin_memory: true
+  num_workers: 0            # 0 for CPU, increase for GPU
+  pin_memory: false          # auto-set to true on CUDA
 
 model:
   architecture: InceptionTime    # InceptionTime or ResNet
   c_in: 12                       # input channels
-  c_out: 10                      # output classes
+  c_out: 9                       # output classes (no coupling_makeup — not in simulator)
   nf: 32                         # number of filters per Inception branch
   depth: 6                       # Inception modules (2 residual blocks x 3)
   ensemble_size: 5
@@ -58,8 +58,8 @@ loss:
   gamma: 2.0
   label_smoothing: 0.1
   # Per-class alpha: [normal, cross_thread, galling, stripped, over_torque,
-  #                   under_torque, wrong_compound, misaligned, stall, coupling]
-  alpha: [0.35, 1.0, 1.5, 1.5, 2.0, 1.0, 2.5, 1.5, 2.0, 3.0]
+  #                   under_torque, wrong_compound, misaligned, stall]
+  alpha: [0.35, 1.0, 1.5, 1.5, 2.0, 1.0, 2.5, 1.5, 2.0]
 
 augmentation:
   mixup_alpha: 0.2
@@ -67,11 +67,13 @@ augmentation:
 
 sampler:
   type: BalancedBatchSampler
-  samples_per_class: 6    # 6 * 10 classes = 60 ~ batch_size 64
+  samples_per_class: 6    # 6 * 9 classes = 54 ~ batch_size 64
 
-# Class mapping (scenario_type -> fault_class int)
+# Class mapping: scenario_type -> fault_class int
+# EVERY ScenarioType must be listed here. Missing types default to 0 (normal)
+# which contaminates the normal class if the scenario is actually a fault.
 class_map:
-  normal_makeup: 0
+  # Normal variants (class 0)
   normal_casing_ltc: 0
   normal_casing_btc: 0
   normal_casing_premium: 0
@@ -79,28 +81,42 @@ class_map:
   normal_tubing: 0
   normal_breakout: 0
   full_cycle: 0
+  multi_connection: 0        # compound normal scenario
+  cold_start: 0              # normal with cold start
+  hot_environment: 0         # normal in hot ambient
+
+  # Fault classes (1-8)
   cross_thread: 1
+  connection_jump: 1         # cross-thread variant
+  stick_slip: 1              # oscillatory — cross-thread-like signature
+  staged_fault: 1            # progressive fault starting as cross-thread
+
   galling: 2
+
   stripped_thread: 3
+
   over_torque: 4
+  washout: 4                 # pipe failure from excess torque
+
   under_torque: 5
+
   wrong_compound: 6
+
   misaligned_stabbing: 7
+
   stall: 8
-  coupling_makeup: 9
 
 # Rebalanced class distribution for training (Section 2.1)
 class_distribution:
-  normal_makeup: 0.500       # 2500 scenarios
-  cross_thread: 0.065        # 325
-  galling: 0.065             # 325
-  stripped_thread: 0.055     # 275
-  over_torque: 0.055         # 275
-  under_torque: 0.055        # 275
-  wrong_compound: 0.050      # 250
-  misaligned_stab: 0.055     # 275
-  stall: 0.050               # 250
-  coupling_makeup: 0.050     # 250
+  normal: 0.500              # 2500 scenarios
+  cross_thread: 0.070        # 350
+  galling: 0.070             # 350
+  stripped_thread: 0.060     # 300
+  over_torque: 0.060         # 300
+  under_torque: 0.060        # 300
+  wrong_compound: 0.060      # 300
+  misaligned_stab: 0.060     # 300
+  stall: 0.060               # 300
 
 class_names:
   - normal_makeup
@@ -112,4 +128,3 @@ class_names:
   - wrong_compound
   - misaligned_stab
   - stall
-  - coupling_makeup

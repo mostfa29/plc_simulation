@@ -106,7 +106,12 @@ REBALANCED_DISTRIBUTION: Dict[str, float] = {
 }
 
 # Fault class mapping (scenario_type -> numeric class for ML)
+# 9 classes: 0=normal, 1=cross_thread, 2=galling, 3=stripped_thread,
+#            4=over_torque, 5=under_torque, 6=wrong_compound,
+#            7=misaligned_stab, 8=stall
+# EVERY ScenarioType must appear here to avoid mislabeling faults as normal.
 FAULT_CLASS_MAP: Dict[str, int] = {
+    # Normal variants (class 0)
     'normal_casing_ltc': 0,
     'normal_casing_btc': 0,
     'normal_casing_premium': 0,
@@ -114,21 +119,22 @@ FAULT_CLASS_MAP: Dict[str, int] = {
     'normal_tubing': 0,
     'normal_breakout': 0,
     'full_cycle': 0,
+    'multi_connection': 0,
+    'cold_start': 0,
+    'hot_environment': 0,
+    # Fault classes (1-8)
     'cross_thread': 1,
+    'connection_jump': 1,
+    'stick_slip': 1,
+    'staged_fault': 1,
     'galling': 2,
     'stripped_thread': 3,
     'over_torque': 4,
+    'washout': 4,
     'under_torque': 5,
     'wrong_compound': 6,
     'misaligned_stabbing': 7,
     'stall': 8,
-    'multi_connection': 0,
-    'stick_slip': 1,
-    'connection_jump': 1,
-    'washout': 4,
-    'cold_start': 0,
-    'hot_environment': 0,
-    'staged_fault': 1,
 }
 
 
