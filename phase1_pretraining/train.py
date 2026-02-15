@@ -40,6 +40,8 @@ from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
+from tqdm import tqdm
+
 from dataset import prepare_datasets, Phase1Dataset
 from models import create_model, InceptionTimeNetwork, count_parameters
 from losses import FocalLoss, MixupFocalLoss, mixup_data
@@ -108,7 +110,10 @@ def train_single_model(model: nn.Module,
     tc = config['training']
     lc = config['loss']
 
-    # Data loaders
+    # Data loaders — only pin_memory on CUDA
+    pin_mem = device.type == 'cuda' and config['data'].get('pin_memory', True)
+    num_workers = config['data'].get('num_workers', 0)
+
     train_sampler = BalancedBatchSampler(
         train_dataset.labels,
         batch_size=tc['batch_size'],
@@ -117,15 +122,15 @@ def train_single_model(model: nn.Module,
     train_loader = DataLoader(
         train_dataset,
         batch_sampler=train_sampler,
-        num_workers=config['data'].get('num_workers', 0),
-        pin_memory=config['data'].get('pin_memory', False),
+        num_workers=num_workers,
+        pin_memory=pin_mem,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=tc['batch_size'] * 2,
         shuffle=False,
-        num_workers=config['data'].get('num_workers', 0),
-        pin_memory=config['data'].get('pin_memory', False),
+        num_workers=num_workers,
+        pin_memory=pin_mem,
     )
 
     # Optimizer + scheduler
@@ -179,7 +184,13 @@ def train_single_model(model: nn.Module,
         epoch_loss = 0.0
         num_batches = 0
 
-        for X_batch, y_batch in train_loader:
+        pbar = tqdm(
+            train_loader,
+            desc=f"[{model_name}] Epoch {epoch+1:3d}/{max_epochs}",
+            leave=False,
+            ncols=100,
+        )
+        for X_batch, y_batch in pbar:
             X_batch = X_batch.to(device)
             y_batch = y_batch.to(device)
 
@@ -215,7 +226,9 @@ def train_single_model(model: nn.Module,
             optimizer.zero_grad()
             epoch_loss += loss.item()
             num_batches += 1
+            pbar.set_postfix(loss=f"{epoch_loss / num_batches:.4f}")
 
+        pbar.close()
         scheduler.step()
         avg_loss = epoch_loss / max(num_batches, 1)
 

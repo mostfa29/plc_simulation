@@ -52,9 +52,11 @@ class BalancedBatchSampler(Sampler):
         # Actual batch size = samples_per_class * num_classes
         self.actual_batch_size = self.samples_per_class * self.num_classes
 
-        # Number of batches per epoch: enough to see each majority-class sample ~once
-        max_class_size = max(len(idx) for idx in self.class_indices.values())
-        self._num_batches = max_class_size // self.samples_per_class
+        # Number of batches per epoch: cap at total_samples / actual_batch_size
+        # so we see roughly each sample once (via balanced sampling).
+        # Without the cap, the majority class alone could drive 500+ batches.
+        total_samples = len(self.labels)
+        self._num_batches = max(1, total_samples // self.actual_batch_size)
 
     def __iter__(self) -> Iterator[List[int]]:
         for _ in range(self._num_batches):
