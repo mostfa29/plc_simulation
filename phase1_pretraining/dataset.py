@@ -12,12 +12,13 @@ Preprocessing pipeline (Section 3.1 — exact order matters):
   5. Sliding window (2000 samples, stride 1000)
   6. Zero-pad short windows (set mask=0)
   7. Z-score normalization (TRAINING SET mean/std only!)
-  8. Assign label from manifest
+  8. Assign label from manifest (or auto-built manifest)
 
 CRITICAL: Z-score mean/std computed from TRAINING split only.
           Never leak test/val statistics into training normalization.
 """
 import json
+import logging
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -33,6 +34,8 @@ from features import (
     CH_MASK,
 )
 
+logger = logging.getLogger(__name__)
+
 
 # Raw sensor columns to extract (order matters — matches features.py)
 RAW_COLUMNS = [
@@ -46,6 +49,41 @@ RAW_COLUMNS = [
 
 # Connection state column (used for phase indicator)
 STATE_COLUMN = 'connection_state'
+
+
+# ═══════════════════════════════════════════════════════════════════
+# FaultCode bitmask -> fault class mapping
+# ═══════════════════════════════════════════════════════════════════
+# From physics_engine.py FaultCode enum + generate_dataset.py FAULT_CLASS_MAP.
+# Used to auto-build manifest when manifest.csv/parquet is missing.
+
+FAULT_BIT_TO_CLASS = {
+    0x0001: 4,   # OVER_TORQUE   -> class 4
+    0x0002: 5,   # UNDER_TORQUE  -> class 5
+    0x0004: 1,   # CROSS_THREAD  -> class 1
+    0x0008: 2,   # GALLING       -> class 2
+    0x0010: 8,   # STALL         -> class 8
+    0x0020: -1,  # OVER_TEMP     -> secondary indicator (not a standalone class)
+    0x0040: 1,   # STICK_SLIP    -> class 1
+    0x0080: 3,   # STRIPPED      -> class 3
+    0x0100: 7,   # MISALIGNED    -> class 7
+    0x0200: 6,   # WRONG_COMPOUND-> class 6
+    0x0400: 4,   # WASHOUT       -> class 4
+    0x0800: 1,   # CONN_JUMP     -> class 1
+}
+
+# Reverse: class int -> representative scenario_type string
+CLASS_TO_SCENARIO_TYPE = {
+    0: 'normal_casing_ltc',
+    1: 'cross_thread',
+    2: 'galling',
+    3: 'stripped_thread',
+    4: 'over_torque',
+    5: 'under_torque',
+    6: 'wrong_compound',
+    7: 'misaligned_stabbing',
+    8: 'stall',
+}
 
 
 @dataclass
@@ -71,6 +109,146 @@ class NormParams:
             std=np.array(data['std'], dtype=np.float32),
         )
 
+
+# ═══════════════════════════════════════════════════════════════════
+# Auto-manifest builder
+# ═══════════════════════════════════════════════════════════════════
+
+def _classify_fault_code(fault_codes: np.ndarray) -> int:
+    """Determine fault class from a scenario's fault_code time series.
+
+    Uses the first non-zero fault code's lowest set bit to identify
+    the root fault, then maps via FAULT_BIT_TO_CLASS.
+
+    Returns:
+        Fault class integer (0-8). 0 = normal.
+    """
+    nonzero_idx = np.flatnonzero(fault_codes)
+    if len(nonzero_idx) == 0:
+        return 0  # Normal — no faults in entire scenario
+
+    first_fc = int(fault_codes[nonzero_idx[0]])
+    primary_bit = first_fc & (-first_fc)  # Isolate lowest set bit
+
+    fault_class = FAULT_BIT_TO_CLASS.get(primary_bit, 0)
+
+    # OVER_TEMP is secondary; look for the next bit
+    if fault_class == -1:
+        remaining = first_fc & ~primary_bit
+        if remaining:
+            next_bit = remaining & (-remaining)
+            fault_class = FAULT_BIT_TO_CLASS.get(next_bit, 0)
+        else:
+            fault_class = 0
+
+    return fault_class
+
+
+def auto_build_manifest(sensor_dir: Path,
+                         class_map: Dict[str, int]) -> pd.DataFrame:
+    """Build manifest by scanning sensor files when manifest.csv is missing.
+
+    Reads fault_code and target_torque from each sensor file to determine
+    the scenario class and normalization parameters. Uses the FaultCode
+    bitmask from the physics engine for deterministic class assignment.
+
+    Args:
+        sensor_dir: Path to sensor/ directory.
+        class_map: scenario_type -> fault_class mapping from config.
+
+    Returns:
+        DataFrame matching the expected manifest schema.
+    """
+    # Build reverse map from class_map
+    class_to_type = {}
+    for stype, cls in class_map.items():
+        if cls not in class_to_type:
+            class_to_type[cls] = stype
+    # Fill any gaps with the hardcoded reverse map
+    for cls, stype in CLASS_TO_SCENARIO_TYPE.items():
+        if cls not in class_to_type:
+            class_to_type[cls] = stype
+
+    # Discover sensor files
+    files = sorted(
+        f for f in sensor_dir.iterdir()
+        if f.suffix in ('.parquet', '.csv')
+    )
+    if not files:
+        raise FileNotFoundError(f"No sensor files found in {sensor_dir}")
+
+    logger.info(f"Auto-building manifest from {len(files)} sensor files "
+                f"(no manifest.csv/parquet found)...")
+
+    # Columns we try to read for classification
+    meta_cols = ['fault_code', 'target_torque', 'turns']
+
+    records = []
+    for i, filepath in enumerate(files):
+        if (i + 1) % 500 == 0 or i == 0:
+            logger.info(f"  Scanning {i+1}/{len(files)}...")
+
+        try:
+            if filepath.suffix == '.parquet':
+                df = pd.read_parquet(filepath, columns=meta_cols)
+            else:
+                df = pd.read_csv(filepath, usecols=meta_cols)
+        except (KeyError, ValueError):
+            # Fall back to reading all columns if subset fails
+            if filepath.suffix == '.parquet':
+                df = pd.read_parquet(filepath)
+            else:
+                df = pd.read_csv(filepath)
+
+        # Fault class from fault_code bitmask
+        if 'fault_code' in df.columns:
+            fault_class = _classify_fault_code(df['fault_code'].values)
+        else:
+            fault_class = 0
+
+        # Target torque (PID setpoint, constant per scenario)
+        target_torque = 5000.0
+        if 'target_torque' in df.columns:
+            tt = df['target_torque'].dropna()
+            if len(tt) > 0:
+                target_torque = float(tt.iloc[-1])
+
+        # Expected turns (not in sensor data; use sensible default)
+        expected_turns = 5.0
+
+        records.append({
+            'scenario_id': i,
+            'filename': filepath.name,
+            'scenario_type': class_to_type.get(fault_class, 'normal_casing_ltc'),
+            'fault_class': fault_class,
+            'target_torque_ftlbs': target_torque,
+            'expected_turns': expected_turns,
+            'num_samples': len(df),
+        })
+
+    manifest = pd.DataFrame(records)
+
+    # Log distribution
+    logger.info(f"Auto-manifest: {len(manifest)} scenarios")
+    for cls in sorted(manifest['fault_class'].unique()):
+        count = int((manifest['fault_class'] == cls).sum())
+        type_name = class_to_type.get(cls, '?')
+        logger.info(f"  Class {cls} ({type_name}): {count}")
+
+    # Save for future runs
+    manifest_path = sensor_dir.parent / 'manifest.csv'
+    try:
+        manifest.to_csv(manifest_path, index=False)
+        logger.info(f"Saved auto-built manifest to {manifest_path}")
+    except OSError:
+        logger.warning(f"Could not save manifest to {manifest_path} (read-only?)")
+
+    return manifest
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Core pipeline functions
+# ═══════════════════════════════════════════════════════════════════
 
 def load_scenario(filepath: Path) -> pd.DataFrame:
     """Load a single scenario from Parquet or CSV."""
@@ -307,6 +485,9 @@ def prepare_datasets(dataset_dir: str,
                       ) -> Tuple[Phase1Dataset, Phase1Dataset, Phase1Dataset, NormParams]:
     """Full pipeline: load manifest -> split -> window -> normalize -> Dataset.
 
+    If manifest.csv/parquet is missing, auto-builds one by scanning sensor
+    files and classifying each scenario from its fault_code bitmask.
+
     Args:
         dataset_dir: Path to synthetic_v2/ directory.
         class_map: scenario_type -> fault_class mapping.
@@ -322,12 +503,19 @@ def prepare_datasets(dataset_dir: str,
     dataset_dir = Path(dataset_dir)
     sensor_dir = dataset_dir / 'sensor'
 
-    # Load manifest
-    manifest_path = dataset_dir / 'manifest.parquet'
-    if manifest_path.exists():
-        manifest = pd.read_parquet(manifest_path)
+    # Load manifest — try parquet, then CSV, then auto-build
+    manifest_parquet = dataset_dir / 'manifest.parquet'
+    manifest_csv = dataset_dir / 'manifest.csv'
+
+    if manifest_parquet.exists():
+        logger.info(f"Loading manifest from {manifest_parquet}")
+        manifest = pd.read_parquet(manifest_parquet)
+    elif manifest_csv.exists():
+        logger.info(f"Loading manifest from {manifest_csv}")
+        manifest = pd.read_csv(manifest_csv)
     else:
-        manifest = pd.read_csv(dataset_dir / 'manifest.csv')
+        logger.info("No manifest found — auto-building from sensor data...")
+        manifest = auto_build_manifest(sensor_dir, class_map)
 
     # Ensure scenario_id column exists
     if 'scenario_id' not in manifest.columns:
@@ -377,13 +565,16 @@ def prepare_datasets(dataset_dir: str,
 
     # Save split indices
     split_path = dataset_dir / 'split_indices.json'
-    with open(split_path, 'w') as f:
-        json.dump({
-            'train': train_ids.tolist(),
-            'val': val_ids.tolist(),
-            'test': test_ids.tolist(),
-        }, f)
-    print(f"Saved split indices to {split_path}")
+    try:
+        with open(split_path, 'w') as f:
+            json.dump({
+                'train': train_ids.tolist(),
+                'val': val_ids.tolist(),
+                'test': test_ids.tolist(),
+            }, f)
+        print(f"Saved split indices to {split_path}")
+    except OSError:
+        pass  # Read-only filesystem
 
     print(f"Dataset sizes: train={len(train_labels)}, val={len(val_labels)}, test={len(test_labels)}")
 
