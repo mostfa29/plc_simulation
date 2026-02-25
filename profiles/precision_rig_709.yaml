@@ -1,16 +1,17 @@
 # Precision Rig 709 — First field machine via eWon VPN
 # GE CPE305 at 129.168.1.25, unit_id=0, word-swapped FLOAT32
-# Register addresses TBD from differential scan (run discover_machine.py)
 #
-# IMPORTANT: This is a TEMPLATE. The register addresses (marked ???) must
-# be filled in after running discover_machine.py while the rig is actively
-# threading pipe. Steve must confirm each register classification.
+# Updated 2026-02-25 from differential scan during ACTIVE THREADING.
+# Primary sensor block: R161-196 (confirmed changing)
+# Mirror/filtered block: R432-440 (lags primary by ~2%)
 #
-# Known from initial scan:
-#   - R1-R4356 has live data
-#   - R6000-6099 is all zeros (shop unit mapping doesn't apply)
-#   - R3447=2026 (year), R3449-3453 = date/time (PLC RTC)
-#   - R131-132, R141-142, R165-166, R169-170 have FLOAT32 candidates
+# STILL NEEDED: Run a TRANSITION scan (idle→threading→idle) to find:
+#   connection_state, fault_code, target_torque, operating_mode, pressure
+#   These registers are constant during steady threading so the diff scan missed them.
+#
+# Run during a connection start/stop:
+#   python discover_machine.py --host 129.168.1.25 --start 1 --end 500 --passes 4 --wait 15
+#
 name: precision_rig_709
 plc_ip: "129.168.1.25"
 plc_port: 502
@@ -27,36 +28,76 @@ pressure_offset: 0.0
 torque_offset: 0.0
 temp_offset: 0.0
 
-# Register map — INCOMPLETE, needs differential scan confirmation
-# Run: python discover_machine.py --host 129.168.1.25 --output profiles/precision_rig_709.yaml
-# Addresses below are best guesses from single snapshot, marked with confidence.
 reg_map:
+  # ── CONFIRMED from differential scan (2026-02-25) ──────────────
   torque:
-    address: 141
+    address: 163
     data_type: FLOAT32
     unit: ft-lbs
-    description: "UNCONFIRMED — WS float ~454 at R141-142, needs differential scan"
+    description: "CONFIRMED — ~14,160 ft-lbs during active threading (28% of 50K max)"
+
+  turns:
+    address: 165
+    data_type: FLOAT32
+    unit: turns
+    description: "CONFIRMED — ~0.44 turns during scan, changing across passes"
+
+  temperature:
+    address: 167
+    data_type: FLOAT32
+    unit: degF
+    description: "CONFIRMED — ~128°F, slowly drifting (oil/hydraulic fluid temp)"
+
+  hookload:
+    address: 189
+    data_type: FLOAT32
+    unit: lbs
+    scale: 0.001
+    description: "CONFIRMED — ~16,208 lbs (16.2 klbs). Scale 0.001 converts to klbs."
+
+  encoder_counts:
+    address: 2078
+    data_type: INT32
+    unit: counts
+    description: "CONFIRMED — monotonically increasing [1275, 3764, 8507] across 3 passes"
+
+  # ── AMBIGUOUS — needs Steve to confirm ─────────────────────────
   rpm:
     address: 169
     data_type: FLOAT32
     unit: RPM
-    description: "UNCONFIRMED — WS float ~137 at R169-170, could be RPM or temp"
-  pressure:
-    address: 131
-    data_type: FLOAT32
-    unit: PSI
-    description: "UNCONFIRMED — WS float ~570 at R131-132, could be pressure or torque"
-  temperature:
-    address: 171
-    data_type: FLOAT32
-    unit: degF
-    description: "UNCONFIRMED — WS float ~97.5 at R171-172, likely temp"
-  encoder_counts:
-    address: 0
-    data_type: INT32
-    unit: counts
-    description: "TBD — needs differential scan to find monotonically increasing register"
-  operating_mode:
-    address: 0
-    data_type: INT16
-    description: "TBD — needs differential scan"
+    description: "AMBIGUOUS — reads ~88. Could be RPM (steady threading) or 2nd temp sensor (88°F). Ask Steve."
+
+  # ── TBD — not found in diff scan (constant during steady threading) ──
+  # These need a TRANSITION scan (capture during connection start/stop).
+  #
+  # Candidates from static non-zero registers in R1-500:
+  #   - connection_state: likely an INT16 in R140-200 range, value 2-5 during threading
+  #   - fault_code: INT16, was 0 during normal operation (won't appear in diff)
+  #   - target_torque: FLOAT32, constant per connection (~14K if matching current torque)
+  #   - pressure: FLOAT32, proportional to torque, ~constant during steady threading
+  #   - operating_mode: INT16, constant during operation
+  #
+  # Uncomment and fill these as Steve confirms addresses:
+  # pressure:
+  #   address: 0
+  #   data_type: FLOAT32
+  #   unit: PSI
+  #   description: "TBD — needs transition scan"
+  # connection_state:
+  #   address: 0
+  #   data_type: INT16
+  #   description: "TBD — needs transition scan (value stays constant during threading)"
+  # fault_code:
+  #   address: 0
+  #   data_type: INT16
+  #   description: "TBD — 0 during normal ops, only changes on fault"
+  # target_torque:
+  #   address: 0
+  #   data_type: FLOAT32
+  #   unit: ft-lbs
+  #   description: "TBD — constant per connection"
+  # operating_mode:
+  #   address: 0
+  #   data_type: INT16
+  #   description: "TBD — needs transition scan"

@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(grep -r \"import torch\\\\|cuda\\\\|device\" /c/Users/asus/Desktop/Clients/Steve/plc_simulation/phase1_pretraining/*.py)"
-    ]
-  }
-}

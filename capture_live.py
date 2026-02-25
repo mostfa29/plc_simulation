@@ -102,10 +102,15 @@ def reg_map_from_profile(profile: MachineProfile) -> Dict:
                                    or not rdef.description):
             continue
         csv_name = name_map.get(prof_name, prof_name)
-        result[csv_name] = {
+        entry = {
             'addr': rdef.address,
             'type': rdef.data_type,
         }
+        if rdef.scale != 1.0:
+            entry['scale'] = rdef.scale
+        if rdef.offset != 0.0:
+            entry['offset'] = rdef.offset
+        result[csv_name] = entry
     return result
 
 
@@ -315,11 +320,15 @@ def decode_registers(raw_regs: List[int], reg_start: int,
             if offset + 1 >= len(raw_regs):
                 values[name] = 0.0
                 continue
-            values[name] = decode_ge_float32(raw_regs[offset], raw_regs[offset + 1])
+            val = decode_ge_float32(raw_regs[offset], raw_regs[offset + 1])
         elif rtype == "INT16":
-            values[name] = float(raw_regs[offset])
+            val = float(raw_regs[offset])
         else:
-            values[name] = float(raw_regs[offset])
+            val = float(raw_regs[offset])
+
+        # Apply scale and offset from profile (e.g. hookload lbs -> klbs)
+        val = val * info.get("scale", 1.0) + info.get("offset", 0.0)
+        values[name] = val
 
     return values
 
@@ -339,11 +348,15 @@ def decode_registers_from_dict(reg_dict: Dict[int, int],
         if rtype == "FLOAT32":
             low = reg_dict.get(addr, 0)
             high = reg_dict.get(addr + 1, 0)
-            values[name] = decode_ge_float32(low, high)
+            val = decode_ge_float32(low, high)
         elif rtype == "INT16":
-            values[name] = float(reg_dict.get(addr, 0))
+            val = float(reg_dict.get(addr, 0))
         else:
-            values[name] = float(reg_dict.get(addr, 0))
+            val = float(reg_dict.get(addr, 0))
+
+        # Apply scale and offset from profile
+        val = val * info.get("scale", 1.0) + info.get("offset", 0.0)
+        values[name] = val
 
     return values
 
