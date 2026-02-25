@@ -592,6 +592,7 @@ class StateInferenceEngine:
 
     def _reset_connection(self):
         """Reset per-connection state."""
+        self.state = 0  # Reset so next _transition() records the entry state
         self.peak_torque = 0.0
         self.shoulder_torque = 0.0
         self.shoulder_turns = 0.0
