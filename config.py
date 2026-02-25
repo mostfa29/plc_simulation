@@ -62,6 +62,11 @@ class MachineProfile:
     unit_id: int = 0
     word_swap: bool = True             # GE CPE305 quirk
 
+    # Fleet identification
+    equipment_type: str = "unknown"    # EquipmentType.value string
+    customer: str = ""                 # Customer / drilling company name
+    ewon_name: str = ""                # Talk2m eWon device name
+
     # Register map: variable_name -> RegisterDef
     reg_map: Dict[str, RegisterDef] = field(default_factory=dict)
 
@@ -111,6 +116,13 @@ class MachineProfile:
             'plc_port': self.plc_port,
             'unit_id': self.unit_id,
             'word_swap': self.word_swap,
+            'equipment_type': self.equipment_type,
+        }
+        if self.customer:
+            data['customer'] = self.customer
+        if self.ewon_name:
+            data['ewon_name'] = self.ewon_name
+        data.update({
             'motor_displacement_cc': self.motor_displacement_cc,
             'max_pressure_psi': self.max_pressure_psi,
             'encoder_cpr': self.encoder_cpr,
@@ -119,7 +131,7 @@ class MachineProfile:
             'torque_offset': self.torque_offset,
             'temp_offset': self.temp_offset,
             'reg_map': {},
-        }
+        })
         for name, rdef in self.reg_map.items():
             entry = {'address': rdef.address, 'data_type': rdef.data_type}
             if rdef.unit:
@@ -200,6 +212,135 @@ class MachineType(Enum):
     POWER_TONG = "power_tong"
     BUCKING_UNIT = "bucking_unit"
     CASING_RUNNING_TOOL = "casing_running_tool"
+
+
+class EquipmentType(Enum):
+    """Specific top drive equipment variants in Steve's fleet.
+
+    All are MachineType.TOP_DRIVE but differ in control system,
+    gear ratio, motor HP, and torque-speed characteristics.
+    Classified from Talk2m eWon fleet export descriptions.
+    """
+    HXI = "hxi"                       # Standard HXI (single speed)
+    HXI_HT = "hxi_ht"                 # HXI High Torque (2-3 speed gearbox)
+    HXI_SMART_SLIDE = "hxi_smart_slide"  # HXI with Smart Slide kit
+    EXI = "exi"                       # EXI 800HP
+    FDS = "fds"                       # FDS (Allen-Bradley CompactLogix)
+    ROSTEL = "rostel"                 # Rostel (GE Rx3i PLC)
+    WARRIOR = "warrior"               # Warrior 250T
+    SMART_DRIVE = "smart_drive"       # Smart Drive 900HP
+    ECI = "eci"                       # ECI
+    EMI = "emi"                       # EMI 400
+    SHOP_UNIT = "shop_unit"           # Shop/commissioning unit
+    UNKNOWN = "unknown"
+
+
+@dataclass
+class EquipmentSpec:
+    """Physics-relevant defaults per equipment type.
+
+    These override ACMotorSpec and TopDriveSpec defaults when
+    generating synthetic data for a specific equipment variant.
+    """
+    rated_hp: float
+    gear_ratio: float
+    num_speeds: int                    # 1 = single speed, 2-3 = multi-speed HT
+    max_torque_ftlbs: float            # Continuous output torque
+    max_rpm: float                     # Max output RPM (after gearbox)
+    plc_platform: str                  # "CPE305", "CompactLogix", "Rx3i"
+    word_swap: bool = True             # GE word-swapped FLOAT32
+    max_intermittent_torque_ftlbs: float = 0.0  # Burst (10s), 0 = auto 1.5x
+    rated_motor_rpm: float = 1800.0    # Motor base speed
+    rotor_inertia_kgm2: float = 12.0
+    gearbox_inertia_kgm2: float = 25.0
+
+    def __post_init__(self):
+        if self.max_intermittent_torque_ftlbs == 0:
+            self.max_intermittent_torque_ftlbs = self.max_torque_ftlbs * 1.5
+
+
+EQUIPMENT_SPECS: Dict[str, 'EquipmentSpec'] = {
+    # ── Standard HXI ─────────────────────────────────────────────
+    EquipmentType.HXI: EquipmentSpec(
+        rated_hp=800, gear_ratio=10.5, num_speeds=1,
+        max_torque_ftlbs=37_500, max_rpm=228,
+        plc_platform="CPE305", word_swap=True,
+    ),
+    # ── HXI High Torque (multi-speed gearbox) ────────────────────
+    EquipmentType.HXI_HT: EquipmentSpec(
+        rated_hp=800, gear_ratio=14.0, num_speeds=3,
+        max_torque_ftlbs=50_000, max_rpm=170,
+        plc_platform="CPE305", word_swap=True,
+        max_intermittent_torque_ftlbs=75_000,
+        gearbox_inertia_kgm2=35.0,  # Heavier multi-speed gearbox
+    ),
+    # ── HXI Smart Slide (same drivetrain as HXI, adds slide) ────
+    EquipmentType.HXI_SMART_SLIDE: EquipmentSpec(
+        rated_hp=800, gear_ratio=10.5, num_speeds=1,
+        max_torque_ftlbs=37_500, max_rpm=228,
+        plc_platform="CPE305", word_swap=True,
+    ),
+    # ── EXI 800HP ────────────────────────────────────────────────
+    EquipmentType.EXI: EquipmentSpec(
+        rated_hp=800, gear_ratio=11.0, num_speeds=1,
+        max_torque_ftlbs=40_000, max_rpm=210,
+        plc_platform="CPE305", word_swap=True,
+    ),
+    # ── FDS (Allen-Bradley CompactLogix) ─────────────────────────
+    EquipmentType.FDS: EquipmentSpec(
+        rated_hp=800, gear_ratio=10.5, num_speeds=1,
+        max_torque_ftlbs=37_500, max_rpm=228,
+        plc_platform="CompactLogix", word_swap=False,  # AB = normal byte order
+    ),
+    # ── Rostel (GE Rx3i) ────────────────────────────────────────
+    EquipmentType.ROSTEL: EquipmentSpec(
+        rated_hp=750, gear_ratio=10.0, num_speeds=1,
+        max_torque_ftlbs=35_000, max_rpm=240,
+        plc_platform="Rx3i", word_swap=True,
+    ),
+    # ── Warrior 250T ─────────────────────────────────────────────
+    EquipmentType.WARRIOR: EquipmentSpec(
+        rated_hp=600, gear_ratio=9.0, num_speeds=1,
+        max_torque_ftlbs=25_000, max_rpm=260,
+        plc_platform="CPE305", word_swap=True,
+        rotor_inertia_kgm2=8.0,       # Smaller motor
+        gearbox_inertia_kgm2=18.0,
+    ),
+    # ── Smart Drive 900HP ────────────────────────────────────────
+    EquipmentType.SMART_DRIVE: EquipmentSpec(
+        rated_hp=900, gear_ratio=10.5, num_speeds=1,
+        max_torque_ftlbs=42_000, max_rpm=220,
+        plc_platform="CPE305", word_swap=True,
+        rotor_inertia_kgm2=14.0,
+        gearbox_inertia_kgm2=28.0,
+    ),
+    # ── ECI ──────────────────────────────────────────────────────
+    EquipmentType.ECI: EquipmentSpec(
+        rated_hp=800, gear_ratio=10.5, num_speeds=1,
+        max_torque_ftlbs=37_500, max_rpm=228,
+        plc_platform="CPE305", word_swap=True,
+    ),
+    # ── EMI 400 ──────────────────────────────────────────────────
+    EquipmentType.EMI: EquipmentSpec(
+        rated_hp=400, gear_ratio=8.0, num_speeds=1,
+        max_torque_ftlbs=18_000, max_rpm=300,
+        plc_platform="CPE305", word_swap=True,
+        rotor_inertia_kgm2=6.0,
+        gearbox_inertia_kgm2=12.0,
+    ),
+    # ── Shop / Commissioning Unit ────────────────────────────────
+    EquipmentType.SHOP_UNIT: EquipmentSpec(
+        rated_hp=800, gear_ratio=10.5, num_speeds=1,
+        max_torque_ftlbs=37_500, max_rpm=228,
+        plc_platform="CPE305", word_swap=True,
+    ),
+    # ── Unknown / fallback ───────────────────────────────────────
+    EquipmentType.UNKNOWN: EquipmentSpec(
+        rated_hp=800, gear_ratio=10.5, num_speeds=1,
+        max_torque_ftlbs=37_500, max_rpm=228,
+        plc_platform="CPE305", word_swap=True,
+    ),
+}
 
 
 class ConnectionCategory(Enum):
@@ -1208,6 +1349,30 @@ class SimConfig:
             self.reg_slope = reg_map['slope_dT_dN'].address
         if 'connection_count' in reg_map:
             self.reg_connection_count = reg_map['connection_count'].address
+
+    def apply_equipment_spec(self, eq_type: 'EquipmentType'):
+        """Apply equipment-specific physics from EQUIPMENT_SPECS.
+
+        Overrides motor and gearbox parameters so synthetic data
+        matches the torque-speed characteristics of the actual
+        equipment variant (HXI vs HXI_HT vs Warrior, etc.).
+        """
+        spec = EQUIPMENT_SPECS.get(eq_type)
+        if spec is None:
+            return
+        # Motor
+        self.top_drive.motor.rated_hp = spec.rated_hp
+        self.top_drive.motor.rated_rpm = spec.rated_motor_rpm
+        self.top_drive.motor.rated_torque_nm = (
+            spec.rated_hp * 5252 / spec.rated_motor_rpm * 1.3558
+        )
+        self.top_drive.motor.rotor_inertia_kgm2 = spec.rotor_inertia_kgm2
+        # Gearbox
+        self.top_drive.gear_ratio = spec.gear_ratio
+        self.top_drive.max_output_rpm = spec.max_rpm
+        self.top_drive.max_continuous_torque_ftlbs = spec.max_torque_ftlbs
+        self.top_drive.max_intermittent_torque_ftlbs = spec.max_intermittent_torque_ftlbs
+        self.top_drive.gearbox_inertia_kgm2 = spec.gearbox_inertia_kgm2
 
     def apply_machine_noise_profile(self):
         """Override sensor noise defaults with machine-type-specific values."""

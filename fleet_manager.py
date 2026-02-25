@@ -48,7 +48,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from config import MachineProfile, RegisterDef
+from config import MachineProfile, RegisterDef, EquipmentType, EQUIPMENT_SPECS
 from discover_machine import (
     ModbusTCPClient,
     RegisterScanner,
@@ -125,6 +125,161 @@ class TestReport:
         lines.append(f"  {overall}")
         lines.append(f"  {'='*60}")
         return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Fleet Catalog (Talk2m eWon Device Database)
+# ═══════════════════════════════════════════════════════════════════
+
+@dataclass
+class FleetCatalogEntry:
+    """One device from the Talk2m fleet catalog."""
+    ewon_name: str
+    equipment_type: str          # EquipmentType.value string
+    customer: str
+    description: str = ""
+    firmware: str = ""
+    status: str = "offline"      # online, offline, connected
+    notes: str = ""
+
+    @property
+    def equipment_type_enum(self) -> EquipmentType:
+        """Convert string to EquipmentType enum."""
+        try:
+            return EquipmentType(self.equipment_type)
+        except ValueError:
+            return EquipmentType.UNKNOWN
+
+    @property
+    def equipment_spec(self):
+        """Get the EquipmentSpec for this device's type."""
+        return EQUIPMENT_SPECS.get(self.equipment_type_enum)
+
+
+class FleetCatalog:
+    """Loads and queries the Talk2m fleet catalog.
+
+    The catalog is a YAML file with all ~130 eWon devices from Steve's
+    Talk2m account. Each device is classified by equipment_type so the
+    physics engine can generate representative synthetic data.
+
+    Usage:
+        catalog = FleetCatalog()
+        entry = catalog.find_by_ewon_name("Precision Rig 709 HXI HT")
+        entries = catalog.find_by_customer("Precision")
+        entries = catalog.find_by_equipment_type("hxi_ht")
+    """
+
+    def __init__(self, catalog_path: str = "fleet_catalog.yaml"):
+        self.catalog_path = Path(catalog_path)
+        self.entries: List[FleetCatalogEntry] = []
+        self._load()
+
+    def _load(self):
+        """Load fleet catalog from YAML."""
+        if not self.catalog_path.exists():
+            logger.warning(f"Fleet catalog not found: {self.catalog_path}")
+            return
+
+        try:
+            import yaml
+            with open(self.catalog_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+
+            devices = data.get('devices', [])
+            for d in devices:
+                self.entries.append(FleetCatalogEntry(
+                    ewon_name=d.get('ewon_name', ''),
+                    equipment_type=d.get('equipment_type', 'unknown'),
+                    customer=d.get('customer', ''),
+                    description=d.get('description', ''),
+                    firmware=d.get('firmware', ''),
+                    status=d.get('status', 'offline'),
+                    notes=d.get('notes', ''),
+                ))
+            logger.info(f"  Loaded {len(self.entries)} devices from fleet catalog")
+        except Exception as e:
+            logger.error(f"Failed to load fleet catalog: {e}")
+
+    def find_by_ewon_name(self, name: str) -> Optional[FleetCatalogEntry]:
+        """Find a device by exact or partial eWon name match."""
+        # Exact match first
+        for entry in self.entries:
+            if entry.ewon_name == name:
+                return entry
+        # Case-insensitive partial match
+        name_lower = name.lower()
+        for entry in self.entries:
+            if name_lower in entry.ewon_name.lower():
+                return entry
+        return None
+
+    def find_by_customer(self, customer: str) -> List[FleetCatalogEntry]:
+        """Find all devices for a customer."""
+        customer_lower = customer.lower()
+        return [e for e in self.entries if e.customer.lower() == customer_lower]
+
+    def find_by_equipment_type(self, eq_type: str) -> List[FleetCatalogEntry]:
+        """Find all devices of a given equipment type."""
+        return [e for e in self.entries if e.equipment_type == eq_type]
+
+    def find_online(self) -> List[FleetCatalogEntry]:
+        """Find all devices currently online or connected."""
+        return [e for e in self.entries
+                if e.status in ('online', 'connected')]
+
+    def summary(self) -> str:
+        """Generate a fleet summary grouped by equipment type and customer."""
+        if not self.entries:
+            return "  Fleet catalog: empty (no fleet_catalog.yaml found)"
+
+        # Count by equipment type
+        type_counts: Dict[str, int] = {}
+        for e in self.entries:
+            type_counts[e.equipment_type] = type_counts.get(e.equipment_type, 0) + 1
+
+        # Count by customer
+        cust_counts: Dict[str, int] = {}
+        for e in self.entries:
+            cust_counts[e.customer] = cust_counts.get(e.customer, 0) + 1
+
+        # Online count
+        online = len(self.find_online())
+
+        lines = [
+            "",
+            "  " + "=" * 58,
+            "  Fleet Catalog Summary",
+            "  " + "=" * 58,
+            f"  Total devices: {len(self.entries)}",
+            f"  Online/Connected: {online}",
+            "",
+            "  By Equipment Type:",
+        ]
+        for eq_type in sorted(type_counts.keys()):
+            count = type_counts[eq_type]
+            spec = EQUIPMENT_SPECS.get(EquipmentType(eq_type) if eq_type != 'unknown'
+                                       else EquipmentType.UNKNOWN)
+            hp = f"{spec.rated_hp:.0f}HP" if spec else "?"
+            lines.append(f"    {eq_type:<20s} {count:>3d}  ({hp})")
+
+        lines.append("")
+        lines.append("  By Customer:")
+        for cust in sorted(cust_counts.keys()):
+            lines.append(f"    {cust:<20s} {cust_counts[cust]:>3d}")
+
+        lines.append("  " + "=" * 58)
+        return "\n".join(lines)
+
+    def equipment_type_distribution(self) -> Dict[str, int]:
+        """Return dict of equipment_type -> count for training data weighting."""
+        counts: Dict[str, int] = {}
+        for e in self.entries:
+            et = e.equipment_type
+            if et == 'unknown' or et == 'shop_unit':
+                continue  # Skip non-field units
+            counts[et] = counts.get(et, 0) + 1
+        return counts
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -522,9 +677,11 @@ class MachineIdentifier:
       3. No match → new machine
     """
 
-    def __init__(self, profiles_dir: str = "profiles"):
+    def __init__(self, profiles_dir: str = "profiles",
+                 catalog_path: str = "fleet_catalog.yaml"):
         self.profiles_dir = Path(profiles_dir)
         self.known_profiles: Dict[str, MachineProfile] = {}
+        self.catalog = FleetCatalog(catalog_path)
         self._load_all_profiles()
 
     def _load_all_profiles(self):
@@ -535,22 +692,32 @@ class MachineIdentifier:
         logger.info(f"  Loaded {len(self.known_profiles)} profiles from "
                      f"{self.profiles_dir}/")
 
-    def identify(self, fingerprint: Dict) -> Tuple[str, Optional[MachineProfile]]:
+    def identify(self, fingerprint: Dict,
+                 ewon_name: Optional[str] = None) -> Tuple[str, Optional[MachineProfile]]:
         """Match a PLC fingerprint to a profile.
 
         Returns: (match_type, profile)
-          match_type: 'exact_ip', 'new_machine'
+          match_type: 'exact_ip', 'catalog_match', 'new_machine'
           profile: loaded MachineProfile or None for new machine
         """
         ip = fingerprint.get('ip', '')
 
-        # Strategy 1: Exact IP match
+        # Strategy 1: Exact IP match against known profiles
         profile = self._match_by_ip(ip)
         if profile:
             logger.info(f"  Matched {ip} to profile '{profile.name}' (exact IP)")
             return ('exact_ip', profile)
 
-        # Strategy 2: No match
+        # Strategy 2: Fleet catalog match by eWon name
+        if ewon_name:
+            catalog_entry = self.catalog.find_by_ewon_name(ewon_name)
+            if catalog_entry:
+                logger.info(f"  Catalog match: {ewon_name} -> "
+                            f"{catalog_entry.equipment_type} "
+                            f"({catalog_entry.customer})")
+                return ('catalog_match', None)
+
+        # Strategy 3: No match
         logger.info(f"  No profile matches {ip} — new machine")
         return ('new_machine', None)
 
@@ -1210,11 +1377,14 @@ class FleetManager:
     ]
 
     def __init__(self, profiles_dir: str = "profiles",
-                 data_dir: str = "data"):
+                 data_dir: str = "data",
+                 catalog_path: str = "fleet_catalog.yaml"):
         self.profiles_dir = profiles_dir
         self.data_dir = data_dir
+        self.catalog_path = catalog_path
         self.detector = EWonDetector()
-        self.identifier = MachineIdentifier(profiles_dir)
+        self.identifier = MachineIdentifier(profiles_dir, catalog_path)
+        self.catalog = self.identifier.catalog
         self.state = "WATCHING"
         self._active_machine: Optional[MachineProfile] = None
         self._last_report: Optional[TestReport] = None
@@ -1491,6 +1661,10 @@ class FleetManager:
 
         lines.append("  " + "=" * 58)
 
+        # Add fleet catalog stats if available
+        if self.catalog.entries:
+            lines.append(self.catalog.summary())
+
         report = "\n".join(lines)
         print(report)
         return report
@@ -1537,6 +1711,8 @@ Examples:
                         help="Print fleet status report")
     parser.add_argument("--detect-tunnel", action="store_true",
                         help="Detect active eWon VPN tunnel")
+    parser.add_argument("--fleet-catalog", action="store_true",
+                        help="Show fleet catalog summary (from Talk2m export)")
 
     parser.add_argument("--host", type=str, default=None,
                         help="PLC IP address (for --onboard)")
@@ -1582,6 +1758,21 @@ Examples:
 
     elif args.fleet_report:
         fm.generate_fleet_report()
+
+    elif args.fleet_catalog:
+        catalog = FleetCatalog()
+        print(catalog.summary())
+        # Also show equipment type distribution for training
+        dist = catalog.equipment_type_distribution()
+        if dist:
+            total = sum(dist.values())
+            print("\n  Training Data Weighting (field units only):")
+            for eq_type, count in sorted(dist.items(), key=lambda x: -x[1]):
+                pct = count / total * 100
+                spec = EQUIPMENT_SPECS.get(
+                    EquipmentType(eq_type), EQUIPMENT_SPECS[EquipmentType.UNKNOWN])
+                print(f"    {eq_type:<20s} {count:>3d} ({pct:4.1f}%)  "
+                      f"gear={spec.gear_ratio}  torque={spec.max_torque_ftlbs:,.0f} ft-lbs")
 
     elif args.detect_tunnel:
         print("\n  Detecting eWon VPN tunnel...")

@@ -16,6 +16,9 @@ plc_ip: "129.168.1.25"
 plc_port: 502
 unit_id: 0
 word_swap: true
+equipment_type: hxi_ht
+customer: Precision
+ewon_name: "Precision Rig 709 HXI HT"
 motor_displacement_cc: 250.0
 max_pressure_psi: 5000.0
 encoder_cpr: 1174

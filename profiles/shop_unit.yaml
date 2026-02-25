@@ -5,6 +5,8 @@ plc_ip: "127.0.0.1"
 plc_port: 5020
 unit_id: 0
 word_swap: true
+equipment_type: shop_unit
+customer: CanGlobal
 motor_displacement_cc: 250.0
 max_pressure_psi: 5000.0
 encoder_cpr: 1174

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/asus/Desktop/**)",
+      "Read(//c/Users/asus/**)"
+    ]
+  }
+}
