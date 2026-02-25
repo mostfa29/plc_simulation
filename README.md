@@ -188,6 +188,76 @@ NC26 through 7-5/8 REG, S-135 grade. 7,000 - 80,000 ft-lbs.
 | 10 | 0x0400 | Washout |
 | 11 | 0x0800 | Connection jump |
 
+## Live Data Capture & Detection
+
+For connecting to a real PLC via eWon VPN and running inference.
+
+### capture_live.py — Real-Time Modbus Data Recorder
+
+Connects to PLC via eWon VPN, polls registers at configurable rate, logs timestamped sensor data to CSV. Zero external dependencies (raw Modbus TCP over socket).
+
+```bash
+# Step 1: Discover active registers on Steve's PLC
+python capture_live.py --host 10.0.0.1 --discover
+
+# Step 2: Capture at 10 Hz (default), single continuous file
+python capture_live.py --host 10.0.0.1
+
+# Step 3: Capture at 20 Hz, one CSV per detected connection
+python capture_live.py --host 10.0.0.1 --hz 20 --segment-mode segmented
+
+# Custom register map (if PLC layout differs from simulator defaults)
+python capture_live.py --host 10.0.0.1 --register-map my_registers.json
+```
+
+Key features:
+- **Discovery mode** (`--discover`): Scans registers to find active addresses
+- **Block reads**: Single Modbus request for R6000-R6030 (critical over VPN latency)
+- **GE CPE305 FLOAT32**: Word-swapped decoding matching the simulator exactly
+- **Connection segmentation**: Detects makeup boundaries from RPM/torque/state transitions
+- **Auto-reconnect**: Exponential backoff on VPN drops
+- **Live dashboard**: Real-time console display of torque, RPM, pressure, state, faults
+
+### detect_live.py — InceptionTime Fault Detection
+
+Runs trained ensemble inference on captured data or live Modbus stream. Same 12-channel feature pipeline as training.
+
+```bash
+# Offline: batch process captured CSVs
+python detect_live.py offline \
+    --input ./live_captures \
+    --model ./results/checkpoints/model.pt \
+    --norm ./results/checkpoints/norm_params.json
+
+# Live: real-time Modbus polling + sliding window inference
+python detect_live.py live \
+    --host 10.0.0.1 \
+    --model ./results/checkpoints/model.pt \
+    --norm ./results/checkpoints/norm_params.json
+
+# With custom alerting thresholds
+python detect_live.py live \
+    --host 10.0.0.1 \
+    --model ./model.pt --norm ./norm.json \
+    --alert-consecutive 3 --alert-confidence 0.7
+```
+
+Key features:
+- **Offline mode**: Per-window predictions CSV + detection summary with alert counts
+- **Live mode**: Sliding window buffer, inference every N samples, consensus alerting
+- **Consensus alerts**: Requires N consecutive fault predictions above confidence threshold before triggering
+- **Severity levels**: OK / WARN (over/under torque, wrong compound) / CRIT (cross-thread, galling, stall)
+- **Prediction logging**: Optional CSV log of every inference result
+
+### Deployment Sequence
+
+1. Steve connects eWon to active rig
+2. Run `capture_live.py --discover` to map actual register addresses
+3. Run `capture_live.py` to record a few hours of normal operations
+4. Retrain model with corrected labels (current blocker)
+5. Run `detect_live.py offline` on captured data to validate model
+6. Go live with `detect_live.py live` for real-time fault detection
+
 ## Module Structure
 
 | File | Purpose | Lines |
@@ -197,8 +267,10 @@ NC26 through 7-5/8 REG, S-135 grade. 7,000 - 80,000 ft-lbs.
 | `sensor_models.py` | Machine-type-specific noise corruption pipeline | ~305 |
 | `scenario.py` | Scenario generation, fault injection, distribution weights | ~580 |
 | `runner.py` | Orchestrator: physics + sensors + Modbus + CSV output | ~390 |
-| `modbus_server.py` | Zero-dependency Modbus TCP (FC03/FC06/FC16) | ~255 |
+| `modbus_server.py` | Zero-dependency Modbus TCP server (FC03/FC06/FC16) | ~255 |
 | `generate_dataset.py` | CLI entry point with filtering and statistics | ~280 |
+| `capture_live.py` | Live Modbus TCP data recorder via eWon VPN | ~430 |
+| `detect_live.py` | Real-time InceptionTime ensemble fault detection | ~520 |
 
 ## Domain Randomization Ranges
 
@@ -219,12 +291,13 @@ NC26 through 7-5/8 REG, S-135 grade. 7,000 - 80,000 ft-lbs.
 
 ## Calibration
 
-When connected to real machine:
-1. Run `capture_registers.py` during threading cycles
-2. Compare real torque-turn curves to simulated
-3. Adjust `config.py` friction factor, hydraulic tau, PID gains
-4. Re-generate dataset with matching domain randomization
-5. Target TSTR ratio > 0.90
+When connected to real machine via eWon VPN:
+1. Run `capture_live.py --discover` to verify register layout
+2. Run `capture_live.py` during threading cycles to record real data
+3. Compare real torque-turn curves to simulated
+4. Adjust `config.py` friction factor, hydraulic tau, PID gains
+5. Re-generate dataset with matching domain randomization
+6. Target TSTR ratio > 0.90
 
 ## References
 

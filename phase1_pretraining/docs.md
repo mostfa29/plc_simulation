@@ -225,6 +225,11 @@ phase1_pretraining/
     confusion_matrix.csv
     per_class_metrics.csv
     phase1_report.md            # Evaluation report
+
+# Live capture & detection (project root)
+capture_live.py              # Modbus TCP data recorder via eWon VPN
+detect_live.py               # Real-time InceptionTime fault detection
+live_captures/               # Default output dir for captured data
 ```
 
 ## Quick Start
@@ -254,6 +259,56 @@ python eval.py --config config.yaml --checkpoint-dir results/checkpoints
 # 6. Check results
 cat results/phase1_report.md
 ```
+
+## Inference & Deployment
+
+After training, the model can be deployed for fault detection on captured or live data using `detect_live.py` in the project root.
+
+### Required Artifacts
+
+Two files from training are needed for inference:
+- **Model checkpoint** (`inception_*_best.pt` or ensemble checkpoint): Trained weights
+- **Normalization params** (`norm_params.json`): Per-channel mean/std from training data
+
+### Offline Detection (Batch)
+
+Process captured CSV files from `capture_live.py`:
+
+```bash
+python detect_live.py offline \
+    --input ./live_captures \
+    --model ./results/checkpoints/model.pt \
+    --norm ./results/checkpoints/norm_params.json \
+    --window-size 1000 --stride 250
+```
+
+Outputs per-window predictions CSV with class probabilities and a detection summary.
+
+### Live Detection (Real-Time)
+
+Poll Modbus registers via eWon VPN and run sliding window inference:
+
+```bash
+python detect_live.py live \
+    --host 10.0.0.1 \
+    --model ./results/checkpoints/model.pt \
+    --norm ./results/checkpoints/norm_params.json \
+    --hz 10 --inference-every 10
+```
+
+The feature pipeline in `detect_live.py` uses the same `features.py` functions as training — raw channels are decoded from Modbus registers, derived channels are computed identically, and normalization uses the saved training-set mean/std. No feature skew between training and inference.
+
+### Alert Thresholds
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--alert-consecutive` | 3 | Consecutive fault windows required before alert fires |
+| `--alert-confidence` | 0.6 | Minimum predicted probability to count as fault |
+
+Severity levels:
+- **CRIT**: cross_thread, galling, stripped_thread, misaligned_stab, stall
+- **WARN**: over_torque, under_torque, wrong_compound
+- **OK**: normal_makeup
 
 ## Troubleshooting
 
