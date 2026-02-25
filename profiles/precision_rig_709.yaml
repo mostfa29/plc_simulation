@@ -1,0 +1,59 @@
+# Precision Rig 709 — First field machine via eWon VPN
+# GE CPE305 at 129.168.1.25, unit_id=0, word-swapped FLOAT32
+# Register addresses TBD from differential scan (run discover_machine.py)
+#
+# IMPORTANT: This is a TEMPLATE. The register addresses (marked ???) must
+# be filled in after running discover_machine.py while the rig is actively
+# threading pipe. Steve must confirm each register classification.
+#
+# Known from initial scan:
+#   - R1-R4356 has live data
+#   - R6000-6099 is all zeros (shop unit mapping doesn't apply)
+#   - R3447=2026 (year), R3449-3453 = date/time (PLC RTC)
+#   - R131-132, R141-142, R165-166, R169-170 have FLOAT32 candidates
+name: precision_rig_709
+plc_ip: "129.168.1.25"
+plc_port: 502
+unit_id: 0
+word_swap: true
+motor_displacement_cc: 250.0
+max_pressure_psi: 5000.0
+encoder_cpr: 1174
+torque_cell_capacity_ftlbs: 50000.0
+pressure_offset: 0.0
+torque_offset: 0.0
+temp_offset: 0.0
+
+# Register map — INCOMPLETE, needs differential scan confirmation
+# Run: python discover_machine.py --host 129.168.1.25 --output profiles/precision_rig_709.yaml
+# Addresses below are best guesses from single snapshot, marked with confidence.
+reg_map:
+  torque:
+    address: 141
+    data_type: FLOAT32
+    unit: ft-lbs
+    description: "UNCONFIRMED — WS float ~454 at R141-142, needs differential scan"
+  rpm:
+    address: 169
+    data_type: FLOAT32
+    unit: RPM
+    description: "UNCONFIRMED — WS float ~137 at R169-170, could be RPM or temp"
+  pressure:
+    address: 131
+    data_type: FLOAT32
+    unit: PSI
+    description: "UNCONFIRMED — WS float ~570 at R131-132, could be pressure or torque"
+  temperature:
+    address: 171
+    data_type: FLOAT32
+    unit: degF
+    description: "UNCONFIRMED — WS float ~97.5 at R171-172, likely temp"
+  encoder_counts:
+    address: 0
+    data_type: INT32
+    unit: counts
+    description: "TBD — needs differential scan to find monotonically increasing register"
+  operating_mode:
+    address: 0
+    data_type: INT16
+    description: "TBD — needs differential scan"

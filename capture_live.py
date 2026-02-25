@@ -37,12 +37,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from config import MachineProfile, DEFAULT_REG_MAP
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Register Map — GE CPE305 / Section 5.1.1
 # ═══════════════════════════════════════════════════════════════════
 
-# Default register layout (configurable via --register-map JSON)
+# Default register layout (configurable via --register-map JSON or --profile YAML)
 DEFAULT_REGISTER_MAP = {
     "torque_ftlbs":     {"addr": 6000, "type": "FLOAT32"},
     "rpm":              {"addr": 6002, "type": "FLOAT32"},
@@ -63,6 +65,89 @@ DEFAULT_REGISTER_MAP = {
     "slope_dT_dN":      {"addr": 6028, "type": "FLOAT32"},
     "connection_count": {"addr": 6030, "type": "INT16"},
 }
+
+
+def reg_map_from_profile(profile: MachineProfile) -> Dict:
+    """Convert a MachineProfile's reg_map into capture_live's format.
+
+    Maps profile register names to the CSV column names used by the
+    capture pipeline. Handles non-contiguous register maps by computing
+    optimal block reads.
+    """
+    # Map profile var names -> capture CSV column names
+    name_map = {
+        'torque': 'torque_ftlbs',
+        'rpm': 'rpm',
+        'pressure': 'pressure_psi',
+        'temperature': 'oil_temp_f',
+        'encoder_counts': 'encoder_counts',
+        'pid_setpoint': 'pid_setpoint',
+        'pid_error': 'pid_error',
+        'pid_output': 'pid_output',
+        'operating_mode': 'operating_mode',
+        'target_torque': 'target_torque',
+        'turns': 'turns',
+        'fault_code': 'fault_code',
+        'connection_state': 'connection_state',
+        'peak_torque': 'peak_torque',
+        'hookload': 'hookload_klbs',
+        'shoulder_torque': 'shoulder_torque',
+        'slope_dT_dN': 'slope_dT_dN',
+        'connection_count': 'connection_count',
+    }
+    result = {}
+    for prof_name, rdef in profile.reg_map.items():
+        csv_name = name_map.get(prof_name, prof_name)
+        result[csv_name] = {
+            'addr': rdef.address,
+            'type': rdef.data_type,
+        }
+    return result
+
+
+def compute_block_reads(reg_map: Dict, max_gap: int = 20) -> List[Tuple[int, int]]:
+    """Compute optimal Modbus block reads for non-contiguous register maps.
+
+    Groups registers into contiguous blocks where gaps <= max_gap registers.
+    Returns list of (start_addr, count) tuples for block reads.
+    """
+    all_addrs = []
+    for info in reg_map.values():
+        addr = info['addr']
+        size = 2 if info['type'] == 'FLOAT32' else 1
+        all_addrs.append(addr)
+        if size == 2:
+            all_addrs.append(addr + 1)
+
+    if not all_addrs:
+        return []
+
+    all_addrs = sorted(set(all_addrs))
+    blocks = []
+    block_start = all_addrs[0]
+    block_end = all_addrs[0]
+
+    for addr in all_addrs[1:]:
+        if addr - block_end <= max_gap:
+            block_end = addr
+        else:
+            blocks.append((block_start, block_end - block_start + 1))
+            block_start = addr
+            block_end = addr
+
+    blocks.append((block_start, block_end - block_start + 1))
+
+    # Ensure no block exceeds 125 registers (Modbus limit)
+    final_blocks = []
+    for start, count in blocks:
+        while count > 125:
+            final_blocks.append((start, 125))
+            start += 125
+            count -= 125
+        if count > 0:
+            final_blocks.append((start, count))
+
+    return final_blocks
 
 # Columns we write to CSV (order matters for downstream pipeline)
 CSV_COLUMNS = [
@@ -483,17 +568,44 @@ def display_live(values: Dict[str, float], elapsed: float, poll_hz: float,
 
 def run_capture(args):
     """Main capture loop with auto-reconnect."""
-    # Load register map
-    if args.register_map:
+    # Load register map: profile YAML > JSON > auto-detect by IP > default
+    reg_map = None
+    profile_name = "default"
+
+    if hasattr(args, 'profile') and args.profile:
+        # Load from MachineProfile YAML
+        try:
+            profile = MachineProfile.from_yaml(args.profile)
+            reg_map = reg_map_from_profile(profile)
+            profile_name = profile.name
+            print(f"  Loaded machine profile: {profile.name} ({args.profile})")
+        except Exception as e:
+            print(f"  WARNING: Failed to load profile {args.profile}: {e}")
+            print(f"  Falling back to default register map.")
+
+    if reg_map is None and args.register_map:
         with open(args.register_map) as f:
             reg_map = json.load(f)
         print(f"  Loaded custom register map: {args.register_map}")
-    else:
-        reg_map = DEFAULT_REGISTER_MAP
 
-    # Compute block read range
+    if reg_map is None:
+        # Try auto-detect by PLC IP from profiles/ directory
+        auto_profile = MachineProfile.find_by_ip("profiles", args.host)
+        if auto_profile:
+            reg_map = reg_map_from_profile(auto_profile)
+            profile_name = auto_profile.name
+            print(f"  Auto-detected profile: {auto_profile.name} "
+                  f"(matched IP {args.host})")
+
+    if reg_map is None:
+        reg_map = DEFAULT_REGISTER_MAP
+        print(f"  Using default R6000 register map")
+
+    # Compute block reads (supports non-contiguous register maps)
+    block_reads = compute_block_reads(reg_map)
+
+    # Also compute simple start/count for single-block mode
     all_addrs = [info["addr"] for info in reg_map.values()]
-    # Account for FLOAT32 taking 2 registers
     max_addr = max(
         info["addr"] + (2 if info["type"] == "FLOAT32" else 1)
         for info in reg_map.values()
@@ -506,8 +618,15 @@ def run_capture(args):
     if args.reg_count is not None:
         reg_count = args.reg_count
 
-    print(f"\n  Register block: R{reg_start} - R{reg_start + reg_count - 1} "
-          f"({reg_count} registers)")
+    # Decide: use multi-block reads if registers are non-contiguous
+    use_multi_block = len(block_reads) > 1
+    if use_multi_block:
+        print(f"\n  Non-contiguous register map ({len(block_reads)} blocks):")
+        for bstart, bcount in block_reads:
+            print(f"    R{bstart}-R{bstart+bcount-1} ({bcount} registers)")
+    else:
+        print(f"\n  Register block: R{reg_start} - R{reg_start + reg_count - 1} "
+              f"({reg_count} registers)")
 
     # Setup
     client = ModbusTCPClient(args.host, args.port, timeout=args.timeout)
@@ -652,8 +771,10 @@ Examples:
     parser.add_argument("--segment-mode", choices=["continuous", "segmented"],
                         default="continuous",
                         help="continuous=single file, segmented=file per connection")
+    parser.add_argument("--profile", default=None,
+                        help="Path to MachineProfile YAML (auto-detects by IP if not set)")
     parser.add_argument("--register-map", default=None,
-                        help="Path to custom register map JSON file")
+                        help="Path to custom register map JSON file (legacy)")
     parser.add_argument("--reg-start", type=int, default=None,
                         help="Override block read start register")
     parser.add_argument("--reg-count", type=int, default=None,

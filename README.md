@@ -12,9 +12,9 @@ Multi-machine, multi-connection simulator for oilfield pipe threading operations
 │  │   PhysicsEngine    │→ │ SensorModel  │→ │  ModbusTCPServer    │  │
 │  │     (100 Hz)       │  │ (noise+ADC)  │  │  (port 502/5020)    │  │
 │  │                    │  │              │  │                     │  │
-│  │ Drive Models:      │  │ White noise  │  │ GE CPE305 %R6000+  │  │
-│  │  AC Motor + VFD    │  │ Pink (1/f)   │  │ Word-swapped F32   │  │
-│  │  Iron Roughneck    │  │ EMI (60Hz)   │  │ FC03/FC06/FC16     │  │
+│  │ Drive Models:      │  │ White noise  │  │ Per-machine profile │  │
+│  │  AC Motor + VFD    │  │ Pink (1/f)   │  │ Dynamic reg map     │  │
+│  │  Iron Roughneck    │  │ EMI (60Hz)   │  │ FC03/FC06/FC16      │  │
 │  │  Hydraulic Motor   │  │ VFD harmonics│  │                     │  │
 │  │                    │  │ Pump ripple  │  │ Your pipeline       │  │
 │  │ Torque-Turn Models:│  │ Gear mesh    │  │ connects identical  │  │
@@ -27,15 +27,15 @@ Multi-machine, multi-connection simulator for oilfield pipe threading operations
 │  │ Thermal Model      │  │  sensor/     │  36 ground truth cols     │
 │  │ String Dynamics    │  │  truth/      │  19 sensor data cols      │
 │  │ Shoulder Detector  │  │  events/     │  100 Hz default           │
-│  │ Slope Calculator   │  │  manifest    │                           │
+│  │ Slope Calculator   │  │  manifest    │  Ground truth labels      │
 │  └────────────────────┘  └──────────────┘                           │
 │                                                                      │
-│  ┌────────────────────┐                                              │
-│  │  ScenarioGenerator │  22 scenario types                           │
-│  │  Domain Randomize  │  Section 6.2 distribution                   │
-│  │  FaultInjector     │  11 fault modes                             │
-│  │  54 connections    │  5 machine types                            │
-│  └────────────────────┘                                              │
+│  ┌────────────────────┐  ┌──────────────────────┐                   │
+│  │  ScenarioGenerator │  │  MachineProfile       │                   │
+│  │  Domain Randomize  │  │  Per-rig register map │                   │
+│  │  FaultInjector     │  │  Sensor calibration   │                   │
+│  │  54 connections    │  │  YAML profiles/       │                   │
+│  └────────────────────┘  └──────────────────────┘                   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -43,13 +43,15 @@ Multi-machine, multi-connection simulator for oilfield pipe threading operations
 
 1. **Flight simulator pattern**: Physics engine runs ground truth at 100Hz, sensor models corrupt it with machine-type-specific noise, Modbus server exposes identical register layout to real GE CPE305 PLC. Your data pipeline can't tell the difference.
 
-2. **Multi-machine support**: Top drives (AC motor + VFD), iron roughnecks (dual-phase spinner/wrench with handoff), power tongs (load cell torque), and bucking units (calibrated precision). Each machine type has distinct noise profiles, torque measurement methods, and operational characteristics.
+2. **Per-machine profiles**: Each rig has its own `MachineProfile` YAML in `profiles/` with register map, sensor calibration, and mechanical parameters. The system auto-discovers register layouts via differential scanning.
 
-3. **Domain randomization (NVIDIA Sim-to-Real)**: Every scenario randomizes friction (log-normal), hydraulic lag, noise amplitude, PID gains, ambient temperature (-20 to 120F), pipe tolerances, compound viscosity, ADC resolution (12-16 bit), gearbox backlash, and EMI amplitude. The real machine is just one sample from this distribution.
+3. **Ground truth labeling**: Labels are determined from simulation **events** (what actually happened), not from scenario intent. A "cross_thread" scenario where the trigger wasn't reached is correctly labeled as "normal".
 
-4. **Zero-dependency Modbus**: Pure stdlib TCP server (no pymodbus). Supports FC03 Read Holding, FC06 Write Single, FC16 Write Multiple with GE word-swapped FLOAT32 encoding.
+4. **Domain randomization (NVIDIA Sim-to-Real)**: Every scenario randomizes friction (log-normal), hydraulic lag, noise amplitude, PID gains, ambient temperature (-20 to 120F), pipe tolerances, compound viscosity, ADC resolution (12-16 bit), gearbox backlash, and EMI amplitude.
 
-5. **Reference-accurate physics**: Torque-turn curves use Farr friction model with temperature/shear-rate-dependent compound friction per API RP 5A3. Pipe specs from API RP 5C1 Table 1 (exact values). Premium connections model 4-phase shoulder contact with seal engagement.
+5. **Zero-dependency Modbus**: Pure stdlib TCP server (no pymodbus). Supports FC03 Read Holding, FC06 Write Single, FC16 Write Multiple with GE word-swapped FLOAT32 encoding.
+
+6. **VPN-aware design**: 400ms latency is the constraint. Designed for 1-2 Hz, block reads, auto-reconnect with exponential backoff.
 
 ## Machine Types
 
@@ -63,11 +65,21 @@ Multi-machine, multi-connection simulator for oilfield pipe threading operations
 ## Quick Start
 
 ```bash
-# Dependencies (only numpy)
+# Dependencies (only numpy required for simulation)
 pip install numpy
+
+# Optional: pyyaml for machine profiles
+pip install pyyaml
 
 # Generate 100 training scenarios (all machine types, all connections)
 python generate_dataset.py --count 100 --output ./data/synthetic
+
+# Generate with rebalanced class distribution (50/50 normal/fault)
+python generate_dataset.py --count 5000 --output ./data/synthetic_v2 \
+    --class-balance rebalanced --seed 42
+
+# Verify ground truth labels before training
+python generate_dataset.py --verify-labels --count 1000
 
 # Filter by machine type
 python generate_dataset.py --count 50 --machine-type top_drive
@@ -80,9 +92,6 @@ python generate_dataset.py --single normal_casing_ltc --pipe 7in_23lb_N80_LTC -o
 
 # Real-time mode with Modbus server
 python generate_dataset.py --realtime --modbus-port 5020
-
-# Custom output rate (default 100Hz)
-python generate_dataset.py --count 50 --output-rate 10
 ```
 
 ## Output Format
@@ -92,15 +101,213 @@ data/synthetic/
 ├── sensor/         # Noisy data (train your AI on this)
 ├── truth/          # Ground truth (validate against this)
 ├── events/         # State transitions, faults, shoulder detection
-├── manifest.csv    # Index with metadata (machine_type, connection_type, fault_code)
-└── stats.txt       # Distribution statistics (scenario, machine, connection, pipe)
+├── manifest.csv    # Index with ground truth labels and metadata
+├── stats.txt       # Distribution statistics with label match rate
+└── config.json     # Generation config for reproducibility
 ```
 
-### Sensor Data Columns (19)
-`time, encoder_counts, rpm, torque_ftlbs, pressure_psi, oil_temp_f, pid_setpoint, pid_error, pid_output, operating_mode, connection_state, target_torque, turns, fault_code, peak_torque, hookload_klbs, shoulder_torque, slope_dT_dN, connection_count`
+### Manifest Format (Updated)
 
-### Ground Truth Columns (36)
-All sensor columns plus: `valve_command_pct, valve_spool_pct, oil_viscosity_cst, motor_mech_efficiency, string_twist_deg, connection_rpm, motor_torque_ftlbs, thread_damage, compound_friction_kf, leakage_flow_gpm, pump_ripple_psi, manifold_temp_f, motor_case_temp_f, peak_torque_ftlbs, hookload_klbs, shoulder_torque_ftlbs, slope_dT_dN, connection_count, machine_phase, vfd_frequency_hz, vfd_current_pct, motor_speed_rpm`
+The manifest now uses **ground truth labels** based on what actually happened in the simulation:
+
+| Column | Description |
+|--------|-------------|
+| `ground_truth_label` | Label from simulation events (USE THIS FOR TRAINING) |
+| `ground_truth_class` | Numeric class (0-8) |
+| `intended_label` | Original scenario type (for debugging) |
+| `intended_class` | Intended numeric class |
+| `label_match` | True if ground_truth == intended |
+| `fault_onset_time` | When fault first detected (seconds) |
+| `fault_onset_turns` | Turns at fault onset |
+| `final_torque_ftlbs` | Torque at end of connection |
+| `total_turns` | Total turns accumulated |
+| `torque_at_shoulder` | Torque when shoulder detected |
+| `torque_gradient_ftlbs_per_turn` | Slope in power-tight zone |
+
+### 9-Class Fault Classification
+
+| Class | Label | Severity |
+|-------|-------|----------|
+| 0 | normal | OK |
+| 1 | cross_thread | CRIT |
+| 2 | galling | CRIT |
+| 3 | stripped_thread | CRIT |
+| 4 | over_torque | WARN |
+| 5 | under_torque | WARN |
+| 6 | wrong_compound | WARN |
+| 7 | misaligned_stab | CRIT |
+| 8 | stall | CRIT |
+
+## Per-Machine Profiles
+
+Each of Steve's rigs has a different PLC program with process data at different register addresses. The `MachineProfile` system handles this:
+
+```
+profiles/
+├── shop_unit.yaml           # Baseline (confirmed R6000 layout)
+└── precision_rig_709.yaml   # First field machine (TBD addresses)
+```
+
+### Creating a Profile
+
+```bash
+# Auto-discover registers on a live machine
+python discover_machine.py --host 129.168.1.25 --output profiles/rig709.yaml
+
+# Network scan to find PLCs on eWon VPN
+python discover_machine.py --scan-network --subnet 129.168.1
+```
+
+### Using Profiles
+
+```python
+from config import MachineProfile, SimConfig
+
+# Load a profile
+profile = MachineProfile.from_yaml("profiles/precision_rig_709.yaml")
+
+# Use with SimConfig
+cfg = SimConfig(machine_profile=profile)
+cfg.apply_machine_profile()  # Updates register addresses and physical params
+```
+
+## Machine Discovery
+
+`discover_machine.py` uses differential scanning to identify live PLC registers:
+
+1. **Network Discovery**: Scans eWon VPN subnet for Modbus TCP hosts
+2. **Differential Scan**: Multiple passes with wait periods to find changing registers
+3. **Register Classification**: Heuristic identification (torque, RPM, pressure, etc.)
+4. **Profile Generation**: Outputs MachineProfile YAML for review
+
+```bash
+# Full discovery (3 passes, 10s wait between each)
+python discover_machine.py --host 129.168.1.25
+
+# Quick scan (2 passes, 5s wait)
+python discover_machine.py --host 129.168.1.25 --passes 2 --wait 5
+
+# Single snapshot (no differential, just find non-zero registers)
+python discover_machine.py --host 129.168.1.25 --snapshot-only
+```
+
+## Physics Calibration
+
+`PhysicsCalibrator` fits simulator parameters to real captured data:
+
+```python
+from physics_engine import PhysicsCalibrator
+
+cal = PhysicsCalibrator(sample_rate_hz=10.0)
+cal.load_real_data("captures/rig709_session1.csv")
+connections = cal.segment_connections()
+result = cal.calibrate(connections[0])
+# result: {'peak_torque_ftlbs': 8500, 'estimated_tau_ms': 135, ...}
+```
+
+## Noise Profiling
+
+`NoiseProfiler` analyzes real captured data to characterize sensor noise:
+
+```python
+from sensor_models import NoiseProfiler
+
+profiler = NoiseProfiler()
+profiler.load_csv("captures/rig709_idle.csv", sample_rate_hz=10.0)
+profile = profiler.analyze()
+# profile: {'torque_snr_db': 54.2, 'pressure_drift_per_s': 0.003, ...}
+```
+
+## Live Data Capture & Detection
+
+### capture_live.py — Real-Time Modbus Data Recorder
+
+Connects to PLC via eWon VPN with support for per-machine profiles:
+
+```bash
+# Auto-detect profile from IP address (checks profiles/ directory)
+python capture_live.py --host 129.168.1.25
+
+# Explicit profile
+python capture_live.py --host 129.168.1.25 --profile profiles/precision_rig_709.yaml
+
+# Capture with connection segmentation
+python capture_live.py --host 129.168.1.25 --hz 20 --segment-mode segmented
+
+# Discovery mode
+python capture_live.py --host 129.168.1.25 --discover
+```
+
+Key features:
+- **MachineProfile support**: Auto-detects by IP or loads from YAML
+- **Non-contiguous register maps**: Multiple block reads for scattered registers
+- **Block reads**: Efficient over VPN latency (single Modbus request per block)
+- **Connection segmentation**: Detects makeup boundaries from RPM/torque/state
+- **Auto-reconnect**: Exponential backoff on VPN drops
+
+### detect_live.py — InceptionTime Fault Detection
+
+```bash
+# Offline: batch process captured CSVs
+python detect_live.py offline \
+    --input ./live_captures \
+    --model ./model.pt --norm ./norm.json
+
+# Live: real-time Modbus polling + inference
+python detect_live.py live \
+    --host 129.168.1.25 \
+    --model ./model.pt --norm ./norm.json
+
+# TSTR validation: test sim-trained model on real data
+python detect_live.py tstr \
+    --input ./real_captures \
+    --model ./model.pt --norm ./norm.json \
+    --labels ./real_labels.csv
+
+# Verify manifest labels before training
+python detect_live.py verify-labels --manifest ./data/synthetic/manifest.csv
+```
+
+### Connection Manager
+
+For managing multiple machines via eWon VPN:
+
+```python
+from connection_manager import ConnectionManager
+
+mgr = ConnectionManager("profiles/")
+mgr.scan()
+active = mgr.get_active()
+if active:
+    print(f"Connected to {active.name} at {active.plc_ip}")
+```
+
+### Deployment Sequence
+
+1. Steve connects eWon to active rig
+2. Run `discover_machine.py --host <ip>` to map register addresses (Steve confirms)
+3. Run `capture_live.py --host <ip>` to record threading cycles
+4. Run `generate_dataset.py --verify-labels` to check label distribution
+5. Generate synthetic data with `generate_dataset.py --class-balance rebalanced`
+6. Train InceptionTime ensemble on Colab
+7. Run `detect_live.py tstr` to validate sim-to-real transfer
+8. Go live with `detect_live.py live`
+
+## Module Structure
+
+| File | Purpose | Key Addition |
+|------|---------|-------------|
+| `config.py` | Constants, pipe catalogs, machine specs, domain randomization | `MachineProfile`, `RegisterDef` |
+| `physics_engine.py` | Drive models, torque-turn, PID, thermal, shoulder detection | `PhysicsCalibrator` |
+| `sensor_models.py` | Machine-type-specific noise corruption pipeline | `NoiseProfiler` |
+| `scenario.py` | Scenario generation, fault injection, distribution weights | |
+| `runner.py` | Orchestrator: physics + sensors + Modbus + CSV output | |
+| `modbus_server.py` | Zero-dependency Modbus TCP server (FC03/FC06/FC16) | Dynamic register maps |
+| `generate_dataset.py` | CLI with ground truth labeling and label verification | `compute_ground_truth_label`, `--verify-labels` |
+| `capture_live.py` | Live Modbus TCP data recorder via eWon VPN | MachineProfile support, multi-block reads |
+| `detect_live.py` | Real-time InceptionTime ensemble fault detection | TSTR validation, `verify-labels` |
+| `discover_machine.py` | Smart register scanner & profile generator | NEW |
+| `connection_manager.py` | Multi-machine connection orchestration | NEW |
 
 ## Scenario Distribution (Section 6.2)
 
@@ -148,7 +355,9 @@ NC26 through 7-5/8 REG, S-135 grade. 7,000 - 80,000 ft-lbs.
 ### Surface/Conductor STC (2 entries)
 16" and 20" K-55. 18,000 - 27,500 ft-lbs.
 
-## PLC Register Map (GE CPE305 — Section 5.1.1)
+## PLC Register Map (GE CPE305)
+
+Default register layout (R6000 zone, confirmed on shop unit):
 
 | Register | Type | Description | Status |
 |----------|------|-------------|--------|
@@ -171,106 +380,18 @@ NC26 through 7-5/8 REG, S-135 grade. 7,000 - 80,000 ft-lbs.
 | %R6028-6029 | FLOAT32 | Slope dT/dN (ft-lb/turn) | Estimated |
 | %R6030 | INT16 | Connection Count | Estimated |
 
-## Fault Code Bitmask (%R6020)
+**Note**: Each rig has different register addresses. Use `discover_machine.py` to find the actual layout, then save as a MachineProfile YAML in `profiles/`.
 
-| Bit | Value | Fault |
-|-----|-------|-------|
-| 0 | 0x0001 | Over-torque |
-| 1 | 0x0002 | Under-torque |
-| 2 | 0x0004 | Cross-thread |
-| 3 | 0x0008 | Galling |
-| 4 | 0x0010 | Stall |
-| 5 | 0x0020 | Over-temperature |
-| 6 | 0x0040 | Stick-slip |
-| 7 | 0x0080 | Stripped thread |
-| 8 | 0x0100 | Misaligned stabbing |
-| 9 | 0x0200 | Wrong compound |
-| 10 | 0x0400 | Washout |
-| 11 | 0x0800 | Connection jump |
+## GE CPE305 FLOAT32 Encoding
 
-## Live Data Capture & Detection
+GE stores FLOAT32 as word-swapped: `[Low Word at N] [High Word at N+1]`
 
-For connecting to a real PLC via eWon VPN and running inference.
-
-### capture_live.py — Real-Time Modbus Data Recorder
-
-Connects to PLC via eWon VPN, polls registers at configurable rate, logs timestamped sensor data to CSV. Zero external dependencies (raw Modbus TCP over socket).
-
-```bash
-# Step 1: Discover active registers on Steve's PLC
-python capture_live.py --host 10.0.0.1 --discover
-
-# Step 2: Capture at 10 Hz (default), single continuous file
-python capture_live.py --host 10.0.0.1
-
-# Step 3: Capture at 20 Hz, one CSV per detected connection
-python capture_live.py --host 10.0.0.1 --hz 20 --segment-mode segmented
-
-# Custom register map (if PLC layout differs from simulator defaults)
-python capture_live.py --host 10.0.0.1 --register-map my_registers.json
+```python
+import struct
+low_word = registers[n]      # e.g., 0x3B5F
+high_word = registers[n+1]   # e.g., 0x440E
+value = struct.unpack('>f', struct.pack('>HH', high_word, low_word))[0]
 ```
-
-Key features:
-- **Discovery mode** (`--discover`): Scans registers to find active addresses
-- **Block reads**: Single Modbus request for R6000-R6030 (critical over VPN latency)
-- **GE CPE305 FLOAT32**: Word-swapped decoding matching the simulator exactly
-- **Connection segmentation**: Detects makeup boundaries from RPM/torque/state transitions
-- **Auto-reconnect**: Exponential backoff on VPN drops
-- **Live dashboard**: Real-time console display of torque, RPM, pressure, state, faults
-
-### detect_live.py — InceptionTime Fault Detection
-
-Runs trained ensemble inference on captured data or live Modbus stream. Same 12-channel feature pipeline as training.
-
-```bash
-# Offline: batch process captured CSVs
-python detect_live.py offline \
-    --input ./live_captures \
-    --model ./results/checkpoints/model.pt \
-    --norm ./results/checkpoints/norm_params.json
-
-# Live: real-time Modbus polling + sliding window inference
-python detect_live.py live \
-    --host 10.0.0.1 \
-    --model ./results/checkpoints/model.pt \
-    --norm ./results/checkpoints/norm_params.json
-
-# With custom alerting thresholds
-python detect_live.py live \
-    --host 10.0.0.1 \
-    --model ./model.pt --norm ./norm.json \
-    --alert-consecutive 3 --alert-confidence 0.7
-```
-
-Key features:
-- **Offline mode**: Per-window predictions CSV + detection summary with alert counts
-- **Live mode**: Sliding window buffer, inference every N samples, consensus alerting
-- **Consensus alerts**: Requires N consecutive fault predictions above confidence threshold before triggering
-- **Severity levels**: OK / WARN (over/under torque, wrong compound) / CRIT (cross-thread, galling, stall)
-- **Prediction logging**: Optional CSV log of every inference result
-
-### Deployment Sequence
-
-1. Steve connects eWon to active rig
-2. Run `capture_live.py --discover` to map actual register addresses
-3. Run `capture_live.py` to record a few hours of normal operations
-4. Retrain model with corrected labels (current blocker)
-5. Run `detect_live.py offline` on captured data to validate model
-6. Go live with `detect_live.py live` for real-time fault detection
-
-## Module Structure
-
-| File | Purpose | Lines |
-|------|---------|-------|
-| `config.py` | All constants, pipe catalogs, machine specs, domain randomization | ~1,060 |
-| `physics_engine.py` | Drive models, torque-turn, PID, thermal, shoulder detection | ~1,620 |
-| `sensor_models.py` | Machine-type-specific noise corruption pipeline | ~305 |
-| `scenario.py` | Scenario generation, fault injection, distribution weights | ~580 |
-| `runner.py` | Orchestrator: physics + sensors + Modbus + CSV output | ~390 |
-| `modbus_server.py` | Zero-dependency Modbus TCP server (FC03/FC06/FC16) | ~255 |
-| `generate_dataset.py` | CLI entry point with filtering and statistics | ~280 |
-| `capture_live.py` | Live Modbus TCP data recorder via eWon VPN | ~430 |
-| `detect_live.py` | Real-time InceptionTime ensemble fault detection | ~520 |
 
 ## Domain Randomization Ranges
 
@@ -288,16 +409,6 @@ Key features:
 | Gearbox backlash | 0.05 - 0.3 deg | Uniform |
 | EMI amplitude | 0.1x - 2.0x | Log-normal |
 | String length | 30 - 120 ft | Uniform |
-
-## Calibration
-
-When connected to real machine via eWon VPN:
-1. Run `capture_live.py --discover` to verify register layout
-2. Run `capture_live.py` during threading cycles to record real data
-3. Compare real torque-turn curves to simulated
-4. Adjust `config.py` friction factor, hydraulic tau, PID gains
-5. Re-generate dataset with matching domain randomization
-6. Target TSTR ratio > 0.90
 
 ## References
 

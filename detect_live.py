@@ -716,6 +716,225 @@ def _display_live_detection(values: Dict, elapsed: float, hz: float,
 
 
 # ═══════════════════════════════════════════════════════════════════
+# TSTR Validation — Train on Synthetic, Test on Real
+# ═══════════════════════════════════════════════════════════════════
+
+def run_tstr(args):
+    """TSTR validation: test a sim-trained model on real captured data.
+
+    The ultimate test for sim-to-real transfer. Loads captured real data
+    from capture_live.py, applies the same feature engineering pipeline,
+    runs inference, and compares to human-labeled ground truth.
+    """
+    device = "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
+    print(f"\n  Device: {device}")
+
+    model = load_model(args.model, device, c_in=args.c_in, c_out=args.c_out,
+                       nf=args.nf, ensemble_size=args.ensemble_size)
+    norm = load_norm_params(args.norm)
+
+    detector = FaultDetector(
+        model, norm, device,
+        window_size=args.window_size,
+        target_torque=args.target_torque,
+        expected_turns=args.expected_turns,
+    )
+
+    # Load real data
+    input_dir = Path(args.input)
+    csv_files = sorted(input_dir.glob("*.csv"))
+    if not csv_files:
+        print(f"  No CSV files found in {input_dir}")
+        return
+
+    print(f"  Found {len(csv_files)} CSV files in {input_dir}")
+
+    # Load optional ground truth labels
+    labels = {}
+    if args.labels:
+        with open(args.labels, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                fname = row.get('filename', '')
+                label = row.get('label', row.get('ground_truth_label', ''))
+                if fname and label:
+                    labels[fname] = label
+        print(f"  Loaded {len(labels)} ground truth labels from {args.labels}")
+
+    # Process each file
+    results = []
+    per_class_correct = {}
+    per_class_total = {}
+
+    for csv_path in csv_files:
+        try:
+            df = pd.read_csv(csv_path)
+        except Exception as e:
+            print(f"  Skip {csv_path.name}: {e}")
+            continue
+
+        if len(df) < args.window_size:
+            # Pad short files
+            pad_len = args.window_size - len(df)
+            df = pd.concat([df] + [df.iloc[[-1]]] * pad_len, ignore_index=True)
+
+        # Extract raw channels
+        raw_channels = ['torque_ftlbs', 'rpm', 'pressure_psi',
+                        'oil_temp_f', 'turns', 'hookload_klbs']
+        available = [c for c in raw_channels if c in df.columns]
+        if len(available) < 4:
+            continue
+
+        raw_data = np.zeros((len(df), len(raw_channels)), dtype=np.float32)
+        for i, col in enumerate(raw_channels):
+            if col in df.columns:
+                raw_data[:, i] = df[col].fillna(0).values.astype(np.float32)
+
+        conn_state = np.zeros(len(df), dtype=np.int32)
+        if 'connection_state' in df.columns:
+            conn_state = df['connection_state'].fillna(0).values.astype(np.int32)
+
+        # Run inference on center window
+        mid = len(raw_data) // 2
+        start = max(0, mid - args.window_size // 2)
+        end = start + args.window_size
+        if end > len(raw_data):
+            end = len(raw_data)
+            start = max(0, end - args.window_size)
+
+        window_raw = raw_data[start:end]
+        window_state = conn_state[start:end]
+
+        result = detector.process_window(window_raw, window_state)
+
+        pred_class = result['pred_class']
+        pred_name = result['pred_name']
+        confidence = result['confidence']
+
+        # Compare with ground truth if available
+        gt_label = labels.get(csv_path.name, 'unknown')
+        is_correct = 'N/A'
+        if gt_label != 'unknown':
+            gt_class_name = gt_label.lower().replace(' ', '_')
+            is_correct = pred_name == gt_class_name
+
+            if gt_class_name not in per_class_total:
+                per_class_total[gt_class_name] = 0
+                per_class_correct[gt_class_name] = 0
+            per_class_total[gt_class_name] += 1
+            if is_correct:
+                per_class_correct[gt_class_name] += 1
+
+        results.append({
+            'file': csv_path.name,
+            'pred_class': pred_class,
+            'pred_name': pred_name,
+            'confidence': confidence,
+            'gt_label': gt_label,
+            'correct': is_correct,
+        })
+
+        status = "OK" if is_correct == True else ("WRONG" if is_correct == False else "?")
+        print(f"    {csv_path.name:40s}  pred={pred_name:15s} "
+              f"({confidence:.1%})  gt={gt_label:15s}  [{status}]")
+
+    # Summary
+    print(f"\n{'='*60}")
+    print(f"  TSTR VALIDATION SUMMARY")
+    print(f"{'='*60}")
+    print(f"  Files processed:  {len(results)}")
+
+    if per_class_total:
+        total_correct = sum(per_class_correct.values())
+        total_samples = sum(per_class_total.values())
+        accuracy = total_correct / max(total_samples, 1)
+
+        print(f"  Overall accuracy: {total_correct}/{total_samples} ({accuracy:.1%})")
+        print(f"\n  Per-class accuracy:")
+        for cls_name in sorted(per_class_total.keys()):
+            correct = per_class_correct.get(cls_name, 0)
+            total = per_class_total[cls_name]
+            acc = correct / max(total, 1)
+            print(f"    {cls_name:20s}  {correct}/{total}  ({acc:.1%})")
+
+        if accuracy >= 0.85:
+            print(f"\n  PASS: TSTR accuracy {accuracy:.1%} >= 85% target")
+        else:
+            print(f"\n  FAIL: TSTR accuracy {accuracy:.1%} < 85% target")
+    else:
+        print(f"\n  No ground truth labels provided (use --labels).")
+        print(f"  Predictions only — ask Steve to confirm.")
+
+    # Save results
+    if args.output:
+        output_dir = Path(args.output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        results_path = output_dir / "tstr_results.csv"
+        with open(results_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=results[0].keys())
+            writer.writeheader()
+            writer.writerows(results)
+        print(f"\n  Results saved to: {results_path}")
+
+
+def verify_manifest_labels(manifest_path: str):
+    """Check that ground_truth_label distribution is sane before training.
+
+    Prints warnings if:
+    - Any class has fewer than 50 samples
+    - Any class is >3x more common than the rarest class
+    - label_match rate is below 80%
+    - Any ground_truth_label is empty or NaN
+    """
+    from collections import Counter
+
+    with open(manifest_path, 'r') as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    if not rows:
+        print("  ERROR: Empty manifest!")
+        return
+
+    # Check for ground_truth_label column
+    if 'ground_truth_label' not in rows[0]:
+        print("  WARNING: No 'ground_truth_label' column found!")
+        print("  This manifest uses the OLD format. Regenerate with updated generate_dataset.py.")
+        return
+
+    gt_counts = Counter(r['ground_truth_label'] for r in rows)
+    total = len(rows)
+    empty_labels = sum(1 for r in rows
+                       if not r.get('ground_truth_label') or r['ground_truth_label'] == 'nan')
+    match_count = sum(1 for r in rows
+                      if r.get('label_match', '').lower() in ('true', '1', 'yes'))
+    match_rate = match_count / total
+
+    print(f"\n  Manifest: {manifest_path}")
+    print(f"  Total samples: {total}")
+    print(f"  Label match rate: {match_rate:.1%}")
+    print(f"  Empty/NaN labels: {empty_labels}")
+    print(f"\n  Ground Truth Distribution:")
+
+    for label, cnt in sorted(gt_counts.items(), key=lambda x: -x[1]):
+        pct = cnt / total * 100
+        warn = ""
+        if cnt < 50:
+            warn = " *** <50 samples ***"
+        print(f"    {label:20s}  {cnt:4d}  ({pct:5.1f}%){warn}")
+
+    # Warnings
+    max_count = max(gt_counts.values())
+    min_count = min(v for v in gt_counts.values() if v > 0)
+    if max_count > 3 * min_count:
+        print(f"\n  WARNING: Severe imbalance (max={max_count}, min={min_count})")
+    if match_rate < 0.80:
+        print(f"\n  WARNING: Label match rate {match_rate:.0%} < 80%")
+    if empty_labels > 0:
+        print(f"\n  WARNING: {empty_labels} empty/NaN labels found")
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Entry Point
 # ═══════════════════════════════════════════════════════════════════
 
@@ -781,6 +1000,22 @@ def main():
     p_live.add_argument("--log-output", default=None,
                         help="Directory to log predictions CSV")
 
+    # ── TSTR subcommand ────────────────────────────────────────────
+    p_tstr = subparsers.add_parser("tstr", parents=[shared],
+                                    help="Train on Synthetic, Test on Real validation")
+    p_tstr.add_argument("--input", required=True,
+                        help="Directory containing real captured CSV files")
+    p_tstr.add_argument("--output", default=None,
+                        help="Output directory for TSTR results")
+    p_tstr.add_argument("--labels", default=None,
+                        help="CSV file with ground truth labels (filename,label)")
+
+    # ── Verify-labels subcommand ───────────────────────────────────
+    p_verify = subparsers.add_parser("verify-labels",
+                                      help="Check manifest label distribution")
+    p_verify.add_argument("--manifest", required=True,
+                          help="Path to manifest.csv")
+
     args = parser.parse_args()
 
     print("\n" + "=" * 60)
@@ -792,6 +1027,10 @@ def main():
         run_offline(args)
     elif args.mode == "live":
         run_live(args)
+    elif args.mode == "tstr":
+        run_tstr(args)
+    elif args.mode == "verify-labels":
+        verify_manifest_labels(args.manifest)
 
 
 if __name__ == "__main__":

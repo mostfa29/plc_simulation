@@ -31,7 +31,7 @@ import socketserver
 import logging
 from typing import Optional
 
-from config import SimConfig
+from config import SimConfig, MachineProfile
 
 logger = logging.getLogger(__name__)
 
@@ -168,17 +168,25 @@ class ThreadedModbusServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 class ModbusTCPServer:
     """Public API for the Modbus TCP simulator server.
 
+    Supports per-machine register layouts via MachineProfile.
+    Falls back to SimConfig's hardcoded R6000 layout if no profile.
+
     Usage:
         server = ModbusTCPServer(cfg)
         server.start()
         server.update_from_reading(sensor_reading)
         server.stop()
+
+        # Or with a machine profile:
+        server = ModbusTCPServer(cfg, profile=my_profile)
     """
 
-    def __init__(self, cfg: SimConfig, host: str = '0.0.0.0', port: int = 502):
+    def __init__(self, cfg: SimConfig, host: str = '0.0.0.0', port: int = 502,
+                 profile: Optional[MachineProfile] = None):
         self.cfg = cfg
         self.host = host
         self.port = port
+        self.profile = profile or cfg.machine_profile
         self.register_bank = RegisterBank()
         self._server: Optional[ThreadedModbusServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -197,60 +205,53 @@ class ModbusTCPServer:
             logger.info("Modbus TCP server stopped")
 
     def update_from_reading(self, reading) -> None:
-        """Write SensorReading into register bank matching Section 5.1.1."""
+        """Write SensorReading into register bank.
+
+        Uses MachineProfile register map if available, otherwise
+        falls back to SimConfig's hardcoded R6000 layout.
+        """
         cfg = self.cfg
         bank = self.register_bank
 
-        # %R6000-6001: Torque (FLOAT32, GE word-swapped) [Confirmed]
-        bank.write_float32(cfg.reg_torque, reading.torque_ftlbs)
+        # Mapping from register variable name to (reading attribute, write method)
+        # This enables dynamic per-machine register layouts.
+        _FLOAT32_MAP = {
+            'torque':           ('torque_ftlbs',    cfg.reg_torque),
+            'rpm':              ('rpm',             cfg.reg_rpm),
+            'pressure':         ('pressure_psi',    cfg.reg_pressure),
+            'temperature':      ('oil_temp_f',      cfg.reg_temperature),
+            'encoder_counts':   ('encoder_counts',  cfg.reg_encoder_counts),
+            'pid_setpoint':     ('pid_setpoint',    cfg.reg_pid_setpoint),
+            'pid_error':        ('pid_error',       cfg.reg_pid_error),
+            'target_torque':    ('target_torque',   cfg.reg_target_torque),
+            'turns':            ('turns',           cfg.reg_turns_count),
+            'peak_torque':      ('peak_torque',     cfg.reg_peak_torque),
+            'hookload':         ('hookload_klbs',   cfg.reg_hookload),
+            'shoulder_torque':  ('shoulder_torque',  cfg.reg_shoulder_torque),
+            'slope_dT_dN':      ('slope_dT_dN',     cfg.reg_slope),
+        }
+        _INT16_MAP = {
+            'pid_output':       ('pid_output',       cfg.reg_pid_output, 100),  # scale by 100
+            'operating_mode':   ('operating_mode',   cfg.reg_mode, 1),
+            'fault_code':       ('fault_code',       cfg.reg_fault_code, 1),
+            'connection_state': ('connection_state',  cfg.reg_state, 1),
+            'connection_count': ('connection_count',  cfg.reg_connection_count, 1),
+        }
 
-        # %R6002-6003: RPM (FLOAT32) [Confirmed]
-        bank.write_float32(cfg.reg_rpm, reading.rpm)
+        # Write FLOAT32 values
+        for var_name, (attr, default_addr) in _FLOAT32_MAP.items():
+            addr = default_addr
+            if self.profile and var_name in self.profile.reg_map:
+                addr = self.profile.reg_map[var_name].address
+            value = getattr(reading, attr, 0.0)
+            if isinstance(value, int):
+                value = float(value)
+            bank.write_float32(addr, value)
 
-        # %R6004-6005: System Pressure (FLOAT32) [Confirmed]
-        bank.write_float32(cfg.reg_pressure, reading.pressure_psi)
-
-        # %R6006-6007: Oil Temperature (FLOAT32) [Confirmed]
-        bank.write_float32(cfg.reg_temperature, reading.oil_temp_f)
-
-        # %R6008-6009: Encoder Counts (FLOAT32) [Confirmed]
-        bank.write_float32(cfg.reg_encoder_counts, float(reading.encoder_counts))
-
-        # %R6010-6011: PID Setpoint (FLOAT32) [Estimated]
-        bank.write_float32(cfg.reg_pid_setpoint, reading.pid_setpoint)
-
-        # %R6012-6013: PID Error (FLOAT32) [Estimated]
-        bank.write_float32(cfg.reg_pid_error, reading.pid_error)
-
-        # %R6014: PID Output (INT16 — % × 100) [Estimated]
-        bank.write_int16(cfg.reg_pid_output, int(reading.pid_output * 100))
-
-        # %R6015: Operating Mode (INT16) [Confirmed]
-        bank.write_int16(cfg.reg_mode, reading.operating_mode)
-
-        # %R6016-6017: Target Torque (FLOAT32) [Estimated]
-        bank.write_float32(cfg.reg_target_torque, reading.target_torque)
-
-        # %R6018-6019: Accumulated Turns (FLOAT32) [Estimated]
-        bank.write_float32(cfg.reg_turns_count, reading.turns)
-
-        # %R6020: Fault Code (INT16 bitmask) [Estimated]
-        bank.write_int16(cfg.reg_fault_code, reading.fault_code)
-
-        # %R6021: Connection State (INT16) [Confirmed]
-        bank.write_int16(cfg.reg_state, reading.connection_state)
-
-        # %R6022-6023: Peak Torque (FLOAT32) [Estimated]
-        bank.write_float32(cfg.reg_peak_torque, reading.peak_torque)
-
-        # %R6024-6025: Hookload (FLOAT32) [Estimated]
-        bank.write_float32(cfg.reg_hookload, reading.hookload_klbs)
-
-        # %R6026-6027: Shoulder Torque (FLOAT32) [Estimated]
-        bank.write_float32(cfg.reg_shoulder_torque, reading.shoulder_torque)
-
-        # %R6028-6029: Slope dT/dN (FLOAT32) [Estimated]
-        bank.write_float32(cfg.reg_slope, reading.slope_dT_dN)
-
-        # %R6030: Connection Count (INT16) [Estimated]
-        bank.write_int16(cfg.reg_connection_count, reading.connection_count)
+        # Write INT16 values
+        for var_name, (attr, default_addr, scale) in _INT16_MAP.items():
+            addr = default_addr
+            if self.profile and var_name in self.profile.reg_map:
+                addr = self.profile.reg_map[var_name].address
+            value = getattr(reading, attr, 0)
+            bank.write_int16(addr, int(value * scale))

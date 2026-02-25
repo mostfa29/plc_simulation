@@ -21,7 +21,172 @@ perturbs these values within specified ranges to create diverse training data.
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 from enum import Enum
+from pathlib import Path
 import numpy as np
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Per-Machine Register Map & Profile (for multi-rig support)
+# ═══════════════════════════════════════════════════════════════════
+
+@dataclass
+class RegisterDef:
+    """Definition of a single PLC register variable.
+
+    Each of Steve's rigs has a different PLC program with process
+    data at different register addresses. This captures where one
+    variable lives in the %R space.
+    """
+    address: int                       # %R address (1-based)
+    data_type: str = "FLOAT32"         # "FLOAT32", "INT16", "INT32"
+    unit: str = ""                     # Engineering unit label
+    scale: float = 1.0                 # Multiply raw value by this
+    offset: float = 0.0               # Add this after scaling
+    description: str = ""
+
+
+@dataclass
+class MachineProfile:
+    """Per-machine configuration loaded from YAML.
+
+    Each of Steve's rigs has a different PLC program with process
+    data at different register addresses. This profile captures
+    the specific register layout, sensor ranges, and mechanical
+    characteristics of one physical machine.
+
+    Load with MachineProfile.from_yaml("profiles/precision_rig_709.yaml")
+    """
+    name: str = "default_sim"
+    plc_ip: str = "127.0.0.1"
+    plc_port: int = 502
+    unit_id: int = 0
+    word_swap: bool = True             # GE CPE305 quirk
+
+    # Register map: variable_name -> RegisterDef
+    reg_map: Dict[str, RegisterDef] = field(default_factory=dict)
+
+    # Machine-specific physical parameters
+    motor_displacement_cc: float = 250.0
+    max_pressure_psi: float = 5000.0
+    encoder_cpr: int = 1174
+    torque_cell_capacity_ftlbs: float = 50_000.0
+
+    # Sensor calibration (from real data)
+    pressure_offset: float = 0.0
+    torque_offset: float = 0.0
+    temp_offset: float = 0.0
+
+    def get_register_address(self, var_name: str) -> Optional[int]:
+        """Get register address for a variable, or None if not mapped."""
+        reg = self.reg_map.get(var_name)
+        return reg.address if reg else None
+
+    @staticmethod
+    def from_yaml(path: str) -> 'MachineProfile':
+        """Load a MachineProfile from a YAML file."""
+        import yaml
+        with open(path, 'r') as f:
+            data = yaml.safe_load(f)
+
+        reg_map = {}
+        for name, rdef in data.pop('reg_map', {}).items():
+            if isinstance(rdef, dict):
+                reg_map[name] = RegisterDef(
+                    address=rdef.get('address', 0),
+                    data_type=rdef.get('data_type', 'FLOAT32'),
+                    unit=rdef.get('unit', ''),
+                    scale=rdef.get('scale', 1.0),
+                    offset=rdef.get('offset', 0.0),
+                    description=rdef.get('description', ''),
+                )
+
+        return MachineProfile(reg_map=reg_map, **data)
+
+    def to_yaml(self, path: str):
+        """Save this MachineProfile to a YAML file."""
+        import yaml
+        data = {
+            'name': self.name,
+            'plc_ip': self.plc_ip,
+            'plc_port': self.plc_port,
+            'unit_id': self.unit_id,
+            'word_swap': self.word_swap,
+            'motor_displacement_cc': self.motor_displacement_cc,
+            'max_pressure_psi': self.max_pressure_psi,
+            'encoder_cpr': self.encoder_cpr,
+            'torque_cell_capacity_ftlbs': self.torque_cell_capacity_ftlbs,
+            'pressure_offset': self.pressure_offset,
+            'torque_offset': self.torque_offset,
+            'temp_offset': self.temp_offset,
+            'reg_map': {},
+        }
+        for name, rdef in self.reg_map.items():
+            entry = {'address': rdef.address, 'data_type': rdef.data_type}
+            if rdef.unit:
+                entry['unit'] = rdef.unit
+            if rdef.scale != 1.0:
+                entry['scale'] = rdef.scale
+            if rdef.offset != 0.0:
+                entry['offset'] = rdef.offset
+            if rdef.description:
+                entry['description'] = rdef.description
+            data['reg_map'][name] = entry
+
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, 'w') as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+    @staticmethod
+    def load_all_profiles(profiles_dir: str = "profiles") -> Dict[str, 'MachineProfile']:
+        """Load all YAML profiles from a directory, keyed by profile name."""
+        profiles = {}
+        p = Path(profiles_dir)
+        if p.exists():
+            for f in p.glob("*.yaml"):
+                try:
+                    profile = MachineProfile.from_yaml(str(f))
+                    profiles[profile.name] = profile
+                except Exception:
+                    pass
+            for f in p.glob("*.yml"):
+                try:
+                    profile = MachineProfile.from_yaml(str(f))
+                    profiles[profile.name] = profile
+                except Exception:
+                    pass
+        return profiles
+
+    @staticmethod
+    def find_by_ip(profiles_dir: str, plc_ip: str) -> Optional['MachineProfile']:
+        """Find a profile matching a given PLC IP address."""
+        all_profiles = MachineProfile.load_all_profiles(profiles_dir)
+        for profile in all_profiles.values():
+            if profile.plc_ip == plc_ip:
+                return profile
+        return None
+
+
+# Default R6000 register map (Steve's shop unit / simulator fallback)
+DEFAULT_REG_MAP: Dict[str, RegisterDef] = {
+    'torque':           RegisterDef(address=6000, data_type='FLOAT32', unit='ft-lbs'),
+    'rpm':              RegisterDef(address=6002, data_type='FLOAT32', unit='RPM'),
+    'pressure':         RegisterDef(address=6004, data_type='FLOAT32', unit='PSI'),
+    'temperature':      RegisterDef(address=6006, data_type='FLOAT32', unit='degF'),
+    'encoder_counts':   RegisterDef(address=6008, data_type='FLOAT32', unit='counts'),
+    'pid_setpoint':     RegisterDef(address=6010, data_type='FLOAT32'),
+    'pid_error':        RegisterDef(address=6012, data_type='FLOAT32'),
+    'pid_output':       RegisterDef(address=6014, data_type='INT16'),
+    'operating_mode':   RegisterDef(address=6015, data_type='INT16'),
+    'target_torque':    RegisterDef(address=6016, data_type='FLOAT32', unit='ft-lbs'),
+    'turns':            RegisterDef(address=6018, data_type='FLOAT32', unit='turns'),
+    'fault_code':       RegisterDef(address=6020, data_type='INT16'),
+    'connection_state': RegisterDef(address=6021, data_type='INT16'),
+    'peak_torque':      RegisterDef(address=6022, data_type='FLOAT32', unit='ft-lbs'),
+    'hookload':         RegisterDef(address=6024, data_type='FLOAT32', unit='klbs'),
+    'shoulder_torque':  RegisterDef(address=6026, data_type='FLOAT32', unit='ft-lbs'),
+    'slope_dT_dN':      RegisterDef(address=6028, data_type='FLOAT32', unit='ft-lbs/turn'),
+    'connection_count': RegisterDef(address=6030, data_type='INT16'),
+}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -858,10 +1023,18 @@ MACHINE_NOISE_PROFILES: Dict[MachineType, SensorNoiseProfile] = {
 
 @dataclass
 class SimConfig:
-    """Master configuration for the simulation."""
+    """Master configuration for the simulation.
+
+    Accepts an optional MachineProfile for per-rig register layout
+    and sensor calibration. If no profile is provided, falls back
+    to the R6000 layout for unit testing / simulator mode.
+    """
 
     # --- Machine Type ---
     machine_type: MachineType = MachineType.TOP_DRIVE
+
+    # --- Machine Profile (per-rig config, optional) ---
+    machine_profile: Optional[MachineProfile] = None
 
     # --- Timing (Section 5.3) ---
     physics_dt: float = 0.01                # Physics timestep (100 Hz)
@@ -984,6 +1157,58 @@ class SimConfig:
     rand_adc_bits: Tuple[int, int] = (12, 16)               # ADC quantization
     rand_pipe_straightness: Tuple[float, float] = (0.0, 0.05)  # deg/ft
 
+    def apply_machine_profile(self):
+        """Apply MachineProfile settings to this SimConfig.
+
+        Overrides physical parameters from the per-rig profile.
+        Called automatically if machine_profile is set.
+        """
+        mp = self.machine_profile
+        if mp is None:
+            return
+        self.motor_displacement_cc = mp.motor_displacement_cc
+        self.max_pressure_psi = mp.max_pressure_psi
+        self.encoder_cpr = mp.encoder_cpr
+        self.torque_cell_capacity_ftlbs = mp.torque_cell_capacity_ftlbs
+        # Apply register addresses from profile
+        reg_map = mp.reg_map
+        if 'torque' in reg_map:
+            self.reg_torque = reg_map['torque'].address
+        if 'rpm' in reg_map:
+            self.reg_rpm = reg_map['rpm'].address
+        if 'pressure' in reg_map:
+            self.reg_pressure = reg_map['pressure'].address
+        if 'temperature' in reg_map:
+            self.reg_temperature = reg_map['temperature'].address
+        if 'encoder_counts' in reg_map:
+            self.reg_encoder_counts = reg_map['encoder_counts'].address
+        if 'pid_setpoint' in reg_map:
+            self.reg_pid_setpoint = reg_map['pid_setpoint'].address
+        if 'pid_error' in reg_map:
+            self.reg_pid_error = reg_map['pid_error'].address
+        if 'pid_output' in reg_map:
+            self.reg_pid_output = reg_map['pid_output'].address
+        if 'operating_mode' in reg_map:
+            self.reg_mode = reg_map['operating_mode'].address
+        if 'target_torque' in reg_map:
+            self.reg_target_torque = reg_map['target_torque'].address
+        if 'turns' in reg_map:
+            self.reg_turns_count = reg_map['turns'].address
+        if 'fault_code' in reg_map:
+            self.reg_fault_code = reg_map['fault_code'].address
+        if 'connection_state' in reg_map:
+            self.reg_state = reg_map['connection_state'].address
+        if 'peak_torque' in reg_map:
+            self.reg_peak_torque = reg_map['peak_torque'].address
+        if 'hookload' in reg_map:
+            self.reg_hookload = reg_map['hookload'].address
+        if 'shoulder_torque' in reg_map:
+            self.reg_shoulder_torque = reg_map['shoulder_torque'].address
+        if 'slope_dT_dN' in reg_map:
+            self.reg_slope = reg_map['slope_dT_dN'].address
+        if 'connection_count' in reg_map:
+            self.reg_connection_count = reg_map['connection_count'].address
+
     def apply_machine_noise_profile(self):
         """Override sensor noise defaults with machine-type-specific values."""
         profile = MACHINE_NOISE_PROFILES.get(self.machine_type)
@@ -1061,5 +1286,8 @@ class SimConfig:
 
         # --- Apply machine-specific noise profile ---
         cfg.apply_machine_noise_profile()
+
+        # --- Apply machine profile overrides (register map, physical params) ---
+        cfg.apply_machine_profile()
 
         return cfg

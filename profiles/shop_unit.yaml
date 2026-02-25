@@ -1,0 +1,88 @@
+# Steve's Shop Unit — Baseline PLC (known register map)
+# This is the original test machine with confirmed R6000 register layout.
+name: shop_unit
+plc_ip: "127.0.0.1"
+plc_port: 5020
+unit_id: 0
+word_swap: true
+motor_displacement_cc: 250.0
+max_pressure_psi: 5000.0
+encoder_cpr: 1174
+torque_cell_capacity_ftlbs: 50000.0
+pressure_offset: 0.0
+torque_offset: 0.0
+temp_offset: 0.0
+
+reg_map:
+  torque:
+    address: 6000
+    data_type: FLOAT32
+    unit: ft-lbs
+    description: "Torque — Confirmed on shop unit"
+  rpm:
+    address: 6002
+    data_type: FLOAT32
+    unit: RPM
+    description: "RPM — Confirmed on shop unit"
+  pressure:
+    address: 6004
+    data_type: FLOAT32
+    unit: PSI
+    description: "System pressure — Confirmed on shop unit"
+  temperature:
+    address: 6006
+    data_type: FLOAT32
+    unit: degF
+    description: "Oil temperature — Confirmed on shop unit"
+  encoder_counts:
+    address: 6008
+    data_type: FLOAT32
+    unit: counts
+    description: "Encoder counts — Confirmed on shop unit"
+  pid_setpoint:
+    address: 6010
+    data_type: FLOAT32
+  pid_error:
+    address: 6012
+    data_type: FLOAT32
+  pid_output:
+    address: 6014
+    data_type: INT16
+  operating_mode:
+    address: 6015
+    data_type: INT16
+    description: "Operating mode — Confirmed on shop unit"
+  target_torque:
+    address: 6016
+    data_type: FLOAT32
+    unit: ft-lbs
+  turns:
+    address: 6018
+    data_type: FLOAT32
+    unit: turns
+  fault_code:
+    address: 6020
+    data_type: INT16
+  connection_state:
+    address: 6021
+    data_type: INT16
+    description: "Connection state — Confirmed on shop unit"
+  peak_torque:
+    address: 6022
+    data_type: FLOAT32
+    unit: ft-lbs
+  hookload:
+    address: 6024
+    data_type: FLOAT32
+    unit: klbs
+  shoulder_torque:
+    address: 6026
+    data_type: FLOAT32
+    unit: ft-lbs
+  slope_dT_dN:
+    address: 6028
+    data_type: FLOAT32
+    unit: ft-lbs/turn
+  connection_count:
+    address: 6030
+    data_type: INT16

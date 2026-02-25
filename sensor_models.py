@@ -303,3 +303,157 @@ class SensorModel:
         self.temp_pink = PinkNoiseGenerator(rng=self.rng)
         self.hookload_pink = PinkNoiseGenerator(rng=self.rng)
         self.rpm_pink = PinkNoiseGenerator(rng=self.rng)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Noise Profiler — Characterize real sensor noise from captured data
+# ═══════════════════════════════════════════════════════════════════
+
+class NoiseProfiler:
+    """Analyzes real captured data to extract noise characteristics.
+
+    Given CSV data from capture_live.py, extracts:
+      - Actual SNR per channel (from steady-state segments)
+      - 60 Hz EMI amplitude (FFT of idle periods)
+      - Pink noise exponent (fit 1/f to power spectrum)
+      - Drift rate (linear regression on long idle periods)
+      - ADC quantization step size (histogram of LSB values)
+
+    Usage:
+        profiler = NoiseProfiler()
+        profiler.load_csv("captures/rig709_idle.csv")
+        profile = profiler.analyze()
+        # profile contains measured noise parameters to feed into domain randomization
+    """
+
+    def __init__(self):
+        self.data = None
+        self.sample_rate_hz = None
+
+    def load_csv(self, path: str, sample_rate_hz: float = 10.0):
+        """Load captured CSV data for analysis."""
+        import csv as csv_mod
+        with open(path, 'r') as f:
+            reader = csv_mod.DictReader(f)
+            rows = list(reader)
+        self.data = rows
+        self.sample_rate_hz = sample_rate_hz
+        return len(rows)
+
+    def _extract_channel(self, channel_name: str) -> np.ndarray:
+        """Extract a single channel as a numpy array."""
+        if not self.data:
+            return np.array([])
+        values = []
+        for row in self.data:
+            try:
+                values.append(float(row.get(channel_name, 0)))
+            except (ValueError, TypeError):
+                values.append(0.0)
+        return np.array(values)
+
+    def _compute_snr(self, signal: np.ndarray) -> float:
+        """Estimate SNR from a steady-state segment (dB)."""
+        if len(signal) < 10:
+            return 0.0
+        mean_val = np.mean(signal)
+        noise_std = np.std(signal)
+        if noise_std < 1e-10:
+            return 100.0  # Essentially no noise
+        snr_linear = abs(mean_val) / noise_std
+        return 20 * np.log10(max(snr_linear, 1e-10))
+
+    def _find_idle_segments(self, rpm: np.ndarray, torque: np.ndarray,
+                            min_length: int = 50) -> list:
+        """Find segments where machine is idle (RPM~0, torque~0)."""
+        segments = []
+        start = None
+        for i in range(len(rpm)):
+            is_idle = abs(rpm[i]) < 1.0 and abs(torque[i]) < 50.0
+            if is_idle and start is None:
+                start = i
+            elif not is_idle and start is not None:
+                if i - start >= min_length:
+                    segments.append((start, i))
+                start = None
+        if start is not None and len(rpm) - start >= min_length:
+            segments.append((start, len(rpm)))
+        return segments
+
+    def _estimate_emi_60hz(self, signal: np.ndarray) -> float:
+        """Estimate 60 Hz EMI amplitude from FFT."""
+        if len(signal) < 64 or self.sample_rate_hz is None:
+            return 0.0
+        # Only works if sample rate > 120 Hz (Nyquist)
+        if self.sample_rate_hz < 120:
+            return 0.0
+        fft_vals = np.abs(np.fft.rfft(signal - np.mean(signal)))
+        freqs = np.fft.rfftfreq(len(signal), d=1.0 / self.sample_rate_hz)
+        # Find 60 Hz bin
+        idx_60 = np.argmin(np.abs(freqs - 60.0))
+        if idx_60 > 0 and idx_60 < len(fft_vals):
+            return fft_vals[idx_60] / len(signal) * 2  # Amplitude
+        return 0.0
+
+    def _estimate_drift_rate(self, signal: np.ndarray) -> float:
+        """Estimate drift rate via linear regression (units/second)."""
+        if len(signal) < 20 or self.sample_rate_hz is None:
+            return 0.0
+        t = np.arange(len(signal)) / self.sample_rate_hz
+        coeffs = np.polyfit(t, signal, 1)
+        return abs(coeffs[0])  # Slope = drift per second
+
+    def _estimate_quantization_step(self, signal: np.ndarray) -> float:
+        """Estimate ADC quantization step from histogram of differences."""
+        if len(signal) < 100:
+            return 0.0
+        diffs = np.diff(signal)
+        diffs = diffs[diffs != 0]
+        if len(diffs) < 10:
+            return 0.0
+        abs_diffs = np.abs(diffs)
+        return float(np.median(abs_diffs))
+
+    def analyze(self) -> dict:
+        """Run full noise analysis on loaded data.
+
+        Returns dict with noise parameters suitable for updating
+        SimConfig or SensorModel domain randomization.
+        """
+        if not self.data:
+            return {}
+
+        torque = self._extract_channel('torque_ftlbs')
+        rpm = self._extract_channel('rpm')
+        pressure = self._extract_channel('pressure_psi')
+        temperature = self._extract_channel('oil_temp_f')
+        hookload = self._extract_channel('hookload_klbs')
+
+        # Find idle segments for noise characterization
+        idle_segs = self._find_idle_segments(rpm, torque)
+
+        result = {
+            'total_samples': len(self.data),
+            'sample_rate_hz': self.sample_rate_hz,
+            'idle_segments': len(idle_segs),
+        }
+
+        # Per-channel analysis on idle segments
+        for ch_name, ch_data in [('torque', torque), ('pressure', pressure),
+                                  ('temperature', temperature), ('rpm', rpm),
+                                  ('hookload', hookload)]:
+            if idle_segs:
+                # Use longest idle segment
+                longest = max(idle_segs, key=lambda s: s[1] - s[0])
+                seg = ch_data[longest[0]:longest[1]]
+            else:
+                seg = ch_data
+
+            result[f'{ch_name}_snr_db'] = round(self._compute_snr(seg), 1)
+            result[f'{ch_name}_drift_per_s'] = round(self._estimate_drift_rate(seg), 6)
+            result[f'{ch_name}_quant_step'] = round(self._estimate_quantization_step(seg), 6)
+            result[f'{ch_name}_emi_60hz'] = round(self._estimate_emi_60hz(seg), 6)
+            result[f'{ch_name}_mean_idle'] = round(float(np.mean(seg)), 4) if len(seg) > 0 else 0.0
+            result[f'{ch_name}_std_idle'] = round(float(np.std(seg)), 4) if len(seg) > 0 else 0.0
+
+        return result
