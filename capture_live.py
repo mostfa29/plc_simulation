@@ -897,10 +897,12 @@ class LiveCSVWriter:
     Modes:
       - continuous: Single CSV file, runs until stopped
       - segmented: New CSV per connection (detected by ConnectionSegmenter)
+
+    In smart mode, extra raw_RXXX columns are captured dynamically.
     """
 
     def __init__(self, output_dir: str, mode: str = "continuous",
-                 prefix: str = "capture"):
+                 prefix: str = "capture", extra_columns: List[str] = None):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.mode = mode
@@ -910,6 +912,17 @@ class LiveCSVWriter:
         self._row_count = 0
         self._file_count = 0
         self._current_path: Optional[Path] = None
+        # Dynamic extra columns (discovered at runtime)
+        self._extra_cols: List[str] = list(extra_columns) if extra_columns else []
+        self._all_cols: List[str] = CSV_COLUMNS + self._extra_cols
+
+    def add_extra_columns(self, cols: List[str]):
+        """Add newly discovered columns. Re-opens file with updated header."""
+        new_cols = [c for c in cols if c not in self._extra_cols
+                    and c not in CSV_COLUMNS]
+        if new_cols:
+            self._extra_cols.extend(new_cols)
+            self._all_cols = CSV_COLUMNS + self._extra_cols
 
     def _open_new_file(self, suffix: str = ""):
         """Open a new CSV file."""
@@ -918,7 +931,7 @@ class LiveCSVWriter:
         name = f"{self.prefix}_{ts}{suffix}.csv"
         self._current_path = self.output_dir / name
         self._file = open(self._current_path, 'w', newline='', buffering=1)
-        self._writer = csv.DictWriter(self._file, fieldnames=CSV_COLUMNS,
+        self._writer = csv.DictWriter(self._file, fieldnames=self._all_cols,
                                        extrasaction='ignore')
         self._writer.writeheader()
         self._file_count += 1
@@ -955,6 +968,16 @@ class LiveCSVWriter:
         """Write a single row of sensor data."""
         if self._writer is None:
             return
+
+        # Discover new raw_RXXX columns on first appearance
+        raw_cols = [k for k in values if k.startswith("raw_R")
+                    and k not in self._extra_cols]
+        if raw_cols:
+            self.add_extra_columns(sorted(raw_cols))
+            # Re-open file with updated header (only at start of capture)
+            if self._row_count == 0:
+                self._open_new_file()  # Re-open with new columns
+
         row = {"timestamp": timestamp, "elapsed_s": f"{elapsed:.4f}"}
         for col in CSV_COLUMNS[2:]:
             row[col] = f"{values.get(col, 0):.6f}"
@@ -963,12 +986,18 @@ class LiveCSVWriter:
                         "connection_count"]:
             if int_col in values:
                 row[int_col] = str(int(values[int_col]))
+        # Extra raw register columns
+        for col in self._extra_cols:
+            if col in values:
+                row[col] = f"{values[col]:.0f}"  # INT16: no decimals
         self._writer.writerow(row)
         self._row_count += 1
 
     def close(self):
         self._close_current()
         print(f"\n  [CSV] Total files written: {self._file_count}")
+        if self._extra_cols:
+            print(f"  [CSV] Extra raw columns captured: {', '.join(self._extra_cols)}")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1046,16 +1075,24 @@ def display_live(values: Dict[str, float], elapsed: float, poll_hz: float,
         f"Hookload: {v('hookload_klbs', '{:6.2f}', ' klbs')}",
     ]
 
-    # Smart mode: 4th line with derived metrics
+    # Smart mode: 4th + 5th lines with derived metrics and raw register count
     if engine is not None:
         q = engine._compute_quality_score() if engine.in_connection else 0.0
         lines.append(
             f"    dT/dN: {engine.slope_dT_dN:8.1f} ft-lb/turn | "
-            f"Shoulder: {'YES' if engine._shoulder_detected else 'no ':3s} | "
+            f"Shoulder: {'YES' if engine._shoulder_detected else 'no ':3s} @ "
+            f"{engine.shoulder_torque:7.0f} | "
             f"Quality: {q:.2f} | "
-            f"Path: {'>'.join(CONNECTION_STATE_NAMES.get(s, '?')[:3] for s in engine.state_path[-5:])}"
+            f"Path: {'>'.join(CONNECTION_STATE_NAMES.get(s, '?')[:3] for s in engine.state_path[-6:])}"
         )
-        num_lines = 4
+        # Show raw register count and shoulder/conn_count from PLC
+        raw_count = sum(1 for k in values if k.startswith("raw_R"))
+        extra = f"    Shoulder: {v('shoulder_torque', '{:8.1f}', ' ft-lb')} | "
+        extra += f"ConnCount: {v('connection_count', '{:4.0f}')} | "
+        extra += f"Encoder: {v('encoder_counts', '{:10.0f}')} | "
+        extra += f"Raw regs: {raw_count}"
+        lines.append(extra)
+        num_lines = 5
     else:
         num_lines = 3
 
@@ -1138,6 +1175,42 @@ def run_capture(args):
     )
     reg_start = min(all_addrs)
     reg_count = max_addr - reg_start
+
+    # Smart mode: widen block reads to capture ALL registers in range
+    # (not just mapped ones). Unknown registers saved as raw_RXXX columns.
+    if smart_mode:
+        # Group addresses into clusters (split when gap > 50 registers)
+        sorted_addrs = sorted(all_addrs)
+        clusters = [[sorted_addrs[0]]]
+        for a in sorted_addrs[1:]:
+            if a - clusters[-1][-1] > 50:
+                clusters.append([a])
+            else:
+                clusters[-1].append(a)
+
+        # Pad each cluster: 3 before, 12 after
+        padded_blocks = []
+        for cluster in clusters:
+            pad_start = max(0, min(cluster) - 3)
+            # Find max addr including type size
+            pad_end = max(cluster) + 12
+            for info in reg_map.values():
+                if info["addr"] in cluster and info["type"] in ("FLOAT32", "INT32", "UINT32"):
+                    pad_end = max(pad_end, info["addr"] + 2 + 10)
+            padded_blocks.append((pad_start, pad_end - pad_start))
+
+        # Split any block > 125 registers (Modbus FC03 limit)
+        final_blocks = []
+        for bs, bc in padded_blocks:
+            while bc > 125:
+                final_blocks.append((bs, 125))
+                bs += 125
+                bc -= 125
+            final_blocks.append((bs, bc))
+        block_reads = final_blocks
+        print(f"\n  SMART: Extended block reads to capture all registers:")
+        for bstart, bcount in block_reads:
+            print(f"    R{bstart}-R{bstart+bcount-1} ({bcount} registers)")
 
     if args.reg_start is not None:
         reg_start = args.reg_start
@@ -1249,6 +1322,20 @@ def run_capture(args):
             elapsed = time.time() - t_start
             now_str = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
             values = decode_registers_from_dict(reg_dict, reg_map, word_swap)
+
+            # Smart mode: capture ALL non-zero unmapped registers as raw_RXXX
+            if smart_mode:
+                # Build set of addresses already decoded by reg_map
+                decoded_addrs = set()
+                for info in reg_map.values():
+                    a = info["addr"]
+                    decoded_addrs.add(a)
+                    if info["type"] in ("FLOAT32", "INT32", "UINT32"):
+                        decoded_addrs.add(a + 1)
+                # Save any non-zero register not in decoded set
+                for addr, val in sorted(reg_dict.items()):
+                    if addr not in decoded_addrs and val != 0:
+                        values[f"raw_R{addr}"] = float(decode_int16_signed(val))
         else:
             # Single contiguous block read
             raw_regs = client.read_holding_registers(reg_start, reg_count)
