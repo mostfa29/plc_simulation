@@ -282,16 +282,64 @@ if active:
     print(f"Connected to {active.name} at {active.plc_ip}")
 ```
 
+### Fleet Management
+
+`fleet_manager.py` is the top-level orchestrator that automates the entire workflow: detect VPN tunnel → discover PLCs → identify machine → run diagnostics → ready for capture.
+
+```bash
+# Daemon mode — watch for VPN tunnels and auto-handle
+python fleet_manager.py --daemon
+
+# One-shot scan — detect tunnel, discover, test, report
+python fleet_manager.py --scan-now
+
+# Test a specific known machine
+python fleet_manager.py --test shop_unit
+
+# Onboard a new machine (auto-fingerprint, differential scan, profile generation)
+python fleet_manager.py --onboard --host 129.168.1.25 --name rig_709
+
+# Fleet status report
+python fleet_manager.py --fleet-report
+
+# Detect VPN tunnel only
+python fleet_manager.py --detect-tunnel
+```
+
+**Components:**
+
+| Class | Purpose |
+|-------|---------|
+| `EWonDetector` | Detects active eWon VPN tunnels via route scan, eCatcher process detection, or heartbeat |
+| `LANDiscovery` | Scans eWon LAN subnet for Modbus hosts, fingerprints PLCs |
+| `MachineIdentifier` | Matches discovered PLCs to known profiles (by IP or register fingerprint) |
+| `SmartTester` | 9-point diagnostic suite: connectivity, latency, register access, data sanity, sensor ranges, dynamics, noise floor, word swap, sample rate |
+| `FleetManager` | State machine orchestrator with daemon mode, scan, onboard, and reporting |
+
+**SmartTester diagnostic suite:**
+
+1. **Connectivity** — TCP connect + Modbus read within 3 attempts
+2. **Latency Profile** — 20 reads, min/avg/max/p95/p99, recommended Hz
+3. **Register Readability** — All mapped registers return data (100% required)
+4. **Data Sanity** — Decoded values within physical range per variable type
+5. **Sensor Ranges** — No stuck/dead/railed sensors (20 samples over 10s)
+6. **Dynamics** — Motion detection (is machine threading or idle?)
+7. **Noise Floor** — Per-channel SNR characterization for domain randomization
+8. **Word Swap** — Confirm GE FLOAT32 byte order matches profile
+9. **Sample Rate** — Achievable poll rate with optimal block grouping
+
 ### Deployment Sequence
 
 1. Steve connects eWon to active rig
-2. Run `discover_machine.py --host <ip>` to map register addresses (Steve confirms)
-3. Run `capture_live.py --host <ip>` to record threading cycles
-4. Run `generate_dataset.py --verify-labels` to check label distribution
-5. Generate synthetic data with `generate_dataset.py --class-balance rebalanced`
-6. Train InceptionTime ensemble on Colab
-7. Run `detect_live.py tstr` to validate sim-to-real transfer
-8. Go live with `detect_live.py live`
+2. Run `fleet_manager.py --scan-now` to auto-detect, identify, and test
+3. If new machine: `fleet_manager.py --onboard --host <ip>` (Steve confirms registers)
+4. Run `capture_live.py --host <ip>` to record threading cycles
+5. Run `generate_dataset.py --verify-labels` to check label distribution
+6. Generate synthetic data with `generate_dataset.py --class-balance rebalanced`
+7. Train InceptionTime ensemble on Colab
+8. Run `detect_live.py tstr` to validate sim-to-real transfer
+9. Go live with `detect_live.py live`
+10. Run `fleet_manager.py --daemon` for continuous monitoring
 
 ## Module Structure
 
@@ -308,6 +356,7 @@ if active:
 | `detect_live.py` | Real-time InceptionTime ensemble fault detection | TSTR validation, `verify-labels` |
 | `discover_machine.py` | Smart register scanner & profile generator | NEW |
 | `connection_manager.py` | Multi-machine connection orchestration | NEW |
+| `fleet_manager.py` | eWon auto-detection, fleet discovery, smart testing | NEW |
 
 ## Scenario Distribution (Section 6.2)
 
