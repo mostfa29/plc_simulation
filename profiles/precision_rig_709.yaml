@@ -1,5 +1,5 @@
 # Precision Rig 709 — HXI HT via eWon VPN
-# Updated 2026-02-25 from differential scans during active threading.
+# Updated 2026-02-26 from discovery scan R160-R200 during active hold.
 name: precision_rig_709
 plc_ip: "129.168.1.25"
 plc_port: 502
@@ -14,34 +14,68 @@ encoder_cpr: 1174
 torque_cell_capacity_ftlbs: 50000.0
 
 reg_map:
+  # ── CONFIRMED FLOAT32 registers ──────────────────────────
   torque:
     address: 163
     data_type: FLOAT32
     unit: ft-lbs
-    description: "CONFIRMED — ~14,160 ft-lbs during active threading"
+    description: "CONFIRMED — 14,056 ft-lbs during active threading"
   turns:
     address: 165
     data_type: FLOAT32
     unit: turns
-    description: "CONFIRMED — ~0.44 turns"
+    description: "CONFIRMED — 0.4392 turns"
   temperature:
     address: 167
     data_type: FLOAT32
     unit: degF
-    description: "CONFIRMED — ~128°F oil temp"
+    description: "CONFIRMED — 127.4°F oil temp"
   rpm:
     address: 169
     data_type: FLOAT32
     unit: RPM
-    description: "LIKELY — ~88, needs Steve confirmation (could be 2nd temp)"
+    description: "CONFIRMED — 87.4 RPM (decoded cross-block, was hidden by discover bug)"
   hookload:
     address: 189
     data_type: FLOAT32
     unit: lbs
     scale: 0.001
-    description: "CONFIRMED — ~16,208 lbs → 16.2 klbs"
+    description: "CONFIRMED — 16,208 lbs → 16.2 klbs"
   encoder_counts:
     address: 2078
     data_type: INT32
     unit: counts
     description: "CONFIRMED — monotonically increasing"
+
+  # ── LIKELY INT16 registers (Steve: please verify) ────────
+  connection_state:
+    address: 175
+    data_type: INT16
+    unit: enum
+    description: "LIKELY — value=5 (HOLD) during hold phase. Steve confirm?"
+  target_torque:
+    address: 178
+    data_type: INT16
+    unit: ft-lbs
+    description: "LIKELY — value=17,297. Reasonable casing target. Steve confirm?"
+  shoulder_torque:
+    address: 180
+    data_type: INT16
+    unit: ft-lbs
+    description: "LIKELY — value=16,928. Could be peak_torque instead. Steve confirm?"
+  connection_count:
+    address: 185
+    data_type: INT16
+    unit: count
+    description: "LIKELY — value=20. Steve confirm?"
+
+  # ── UNKNOWN registers (need Steve or differential scan) ──
+  # R161 = 24979 (INT16) — diagnostic/timer?
+  # R162 = 14056 (INT16) — integer mirror of torque
+  # R171-R172 = 0 — could be pressure_psi FLOAT32 (sensor offline?)
+  # R173 = -5 (INT16) — status/error flag
+  # R187 = -532/0xFDEC (INT16) — bitmask/flags?
+  # R188 = 5 (INT16) — copy of connection_state?
+  # R192 = 17232 (INT16) — another torque reference?
+  # R195-R196 = GE_f32 0.0065 — tiny float, unknown
+  # R197 = -5 (INT16) — same as R173
