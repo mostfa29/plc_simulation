@@ -97,6 +97,10 @@ def reg_map_from_profile(profile: MachineProfile) -> Dict:
     }
     result = {}
     for prof_name, rdef in profile.reg_map.items():
+        # Skip placeholder/TBD registers (address=0 with unconfirmed description)
+        if rdef.address == 0 and ('TBD' in rdef.description or 'tbd' in rdef.description
+                                   or not rdef.description):
+            continue
         csv_name = name_map.get(prof_name, prof_name)
         result[csv_name] = {
             'addr': rdef.address,
@@ -316,6 +320,30 @@ def decode_registers(raw_regs: List[int], reg_start: int,
             values[name] = float(raw_regs[offset])
         else:
             values[name] = float(raw_regs[offset])
+
+    return values
+
+
+def decode_registers_from_dict(reg_dict: Dict[int, int],
+                                reg_map: Dict) -> Dict[str, float]:
+    """Decode named values from a register address->value dict.
+
+    Used for multi-block reads where registers are non-contiguous.
+    Each block read populates reg_dict with {address: raw_value}.
+    """
+    values = {}
+    for name, info in reg_map.items():
+        addr = info["addr"]
+        rtype = info["type"]
+
+        if rtype == "FLOAT32":
+            low = reg_dict.get(addr, 0)
+            high = reg_dict.get(addr + 1, 0)
+            values[name] = decode_ge_float32(low, high)
+        elif rtype == "INT16":
+            values[name] = float(reg_dict.get(addr, 0))
+        else:
+            values[name] = float(reg_dict.get(addr, 0))
 
     return values
 
@@ -571,6 +599,7 @@ def run_capture(args):
     # Load register map: profile YAML > JSON > auto-detect by IP > default
     reg_map = None
     profile_name = "default"
+    unit_id = 1  # Default Modbus unit ID
 
     if hasattr(args, 'profile') and args.profile:
         # Load from MachineProfile YAML
@@ -578,6 +607,7 @@ def run_capture(args):
             profile = MachineProfile.from_yaml(args.profile)
             reg_map = reg_map_from_profile(profile)
             profile_name = profile.name
+            unit_id = profile.unit_id
             print(f"  Loaded machine profile: {profile.name} ({args.profile})")
         except Exception as e:
             print(f"  WARNING: Failed to load profile {args.profile}: {e}")
@@ -594,6 +624,7 @@ def run_capture(args):
         if auto_profile:
             reg_map = reg_map_from_profile(auto_profile)
             profile_name = auto_profile.name
+            unit_id = auto_profile.unit_id
             print(f"  Auto-detected profile: {auto_profile.name} "
                   f"(matched IP {args.host})")
 
@@ -619,7 +650,8 @@ def run_capture(args):
         reg_count = args.reg_count
 
     # Decide: use multi-block reads if registers are non-contiguous
-    use_multi_block = len(block_reads) > 1
+    # Also force multi-block if single span exceeds 125 (Modbus FC03 limit)
+    use_multi_block = len(block_reads) > 1 or reg_count > 125
     if use_multi_block:
         print(f"\n  Non-contiguous register map ({len(block_reads)} blocks):")
         for bstart, bcount in block_reads:
@@ -629,7 +661,8 @@ def run_capture(args):
               f"({reg_count} registers)")
 
     # Setup
-    client = ModbusTCPClient(args.host, args.port, timeout=args.timeout)
+    client = ModbusTCPClient(args.host, args.port, timeout=args.timeout,
+                              unit_id=unit_id)
     segmenter = ConnectionSegmenter()
     writer = LiveCSVWriter(args.output, mode=args.segment_mode,
                            prefix=args.prefix)
@@ -674,25 +707,51 @@ def run_capture(args):
                 reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
                 continue
 
-        # Poll
+        # Poll — use multi-block reads for non-contiguous register maps
         t_poll_start = time.time()
-        raw_regs = client.read_holding_registers(reg_start, reg_count)
 
-        if raw_regs is None:
-            poll_errors += 1
-            if poll_errors > 3:
-                print(f"  [CONN] Lost connection ({poll_errors} errors)")
-                client.close()
-                poll_errors = 0
-            continue
+        if use_multi_block:
+            # Multi-block: read each block separately, merge into dict
+            reg_dict = {}
+            read_ok = True
+            for bstart, bcount in block_reads:
+                regs = client.read_holding_registers(bstart, bcount)
+                if regs is None:
+                    read_ok = False
+                    break
+                for i, val in enumerate(regs):
+                    reg_dict[bstart + i] = val
 
-        poll_errors = 0
-        poll_count += 1
-        elapsed = time.time() - t_start
-        now_str = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
+            if not read_ok:
+                poll_errors += 1
+                if poll_errors > 3:
+                    print(f"  [CONN] Lost connection ({poll_errors} errors)")
+                    client.close()
+                    poll_errors = 0
+                continue
 
-        # Decode registers
-        values = decode_registers(raw_regs, reg_start, reg_map)
+            poll_errors = 0
+            poll_count += 1
+            elapsed = time.time() - t_start
+            now_str = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
+            values = decode_registers_from_dict(reg_dict, reg_map)
+        else:
+            # Single contiguous block read
+            raw_regs = client.read_holding_registers(reg_start, reg_count)
+
+            if raw_regs is None:
+                poll_errors += 1
+                if poll_errors > 3:
+                    print(f"  [CONN] Lost connection ({poll_errors} errors)")
+                    client.close()
+                    poll_errors = 0
+                continue
+
+            poll_errors = 0
+            poll_count += 1
+            elapsed = time.time() - t_start
+            now_str = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
+            values = decode_registers(raw_regs, reg_start, reg_map)
 
         # Connection segmentation
         event = segmenter.update(values, elapsed)
