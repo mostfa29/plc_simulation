@@ -67,12 +67,11 @@ DEFAULT_REGISTER_MAP = {
 }
 
 
-def reg_map_from_profile(profile: MachineProfile) -> Dict:
+def reg_map_from_profile(profile: MachineProfile) -> Tuple[Dict, bool]:
     """Convert a MachineProfile's reg_map into capture_live's format.
 
     Maps profile register names to the CSV column names used by the
-    capture pipeline. Handles non-contiguous register maps by computing
-    optimal block reads.
+    capture pipeline. Returns (reg_map, word_swap) tuple.
     """
     # Map profile var names -> capture CSV column names
     name_map = {
@@ -111,7 +110,7 @@ def reg_map_from_profile(profile: MachineProfile) -> Dict:
         if rdef.offset != 0.0:
             entry['offset'] = rdef.offset
         result[csv_name] = entry
-    return result
+    return result, profile.word_swap
 
 
 def compute_block_reads(reg_map: Dict, max_gap: int = 20) -> List[Tuple[int, int]]:
@@ -123,7 +122,7 @@ def compute_block_reads(reg_map: Dict, max_gap: int = 20) -> List[Tuple[int, int
     all_addrs = []
     for info in reg_map.values():
         addr = info['addr']
-        size = 2 if info['type'] == 'FLOAT32' else 1
+        size = 2 if info['type'] in ('FLOAT32', 'INT32', 'UINT32') else 1
         all_addrs.append(addr)
         if size == 2:
             all_addrs.append(addr + 1)
@@ -279,17 +278,44 @@ class ModbusTCPClient:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# GE CPE305 FLOAT32 Decoding
+# Register Value Decoding (FLOAT32 / INT32 / INT16)
 # ═══════════════════════════════════════════════════════════════════
 
-def decode_ge_float32(low_word: int, high_word: int) -> float:
-    """Decode GE CPE305 word-swapped FLOAT32.
+def decode_float32(word_a: int, word_b: int, word_swap: bool = True) -> float:
+    """Decode 32-bit float from two consecutive 16-bit registers.
 
-    GE stores: [Low Word at N] [High Word at N+1]
-    IEEE 754:  [High Word] [Low Word]
+    Args:
+        word_a: Register at address N.
+        word_b: Register at address N+1.
+        word_swap: True = GE convention (low word at N, high word at N+1).
+                   False = standard IEEE (high word at N, low word at N+1).
     """
-    packed = struct.pack('>HH', high_word, low_word)
+    if word_swap:
+        packed = struct.pack('>HH', word_b, word_a)   # GE: swap back
+    else:
+        packed = struct.pack('>HH', word_a, word_b)    # IEEE: as-is
     return struct.unpack('>f', packed)[0]
+
+
+# Keep old name as alias for backward compatibility
+decode_ge_float32 = decode_float32
+
+
+def decode_int32(word_a: int, word_b: int, word_swap: bool = False,
+                 signed: bool = True) -> int:
+    """Decode 32-bit integer from two consecutive 16-bit registers.
+
+    NOTE: word_swap defaults to False because GE PLCs only word-swap
+    FLOAT32 values. INT32 always uses standard order (MSW at N, LSW at N+1)
+    even on GE hardware. Pass word_swap=True only for non-standard PLCs
+    that swap integer word order.
+    """
+    if word_swap:
+        packed = struct.pack('>HH', word_b, word_a)
+    else:
+        packed = struct.pack('>HH', word_a, word_b)
+    fmt = '>i' if signed else '>I'
+    return struct.unpack(fmt, packed)[0]
 
 
 def decode_int16_signed(value: int) -> int:
@@ -304,7 +330,7 @@ def decode_int16_signed(value: int) -> int:
 # ═══════════════════════════════════════════════════════════════════
 
 def decode_registers(raw_regs: List[int], reg_start: int,
-                     reg_map: Dict) -> Dict[str, float]:
+                     reg_map: Dict, word_swap: bool = True) -> Dict[str, float]:
     """Decode raw register array into named values using register map."""
     values = {}
     for name, info in reg_map.items():
@@ -320,7 +346,16 @@ def decode_registers(raw_regs: List[int], reg_start: int,
             if offset + 1 >= len(raw_regs):
                 values[name] = 0.0
                 continue
-            val = decode_ge_float32(raw_regs[offset], raw_regs[offset + 1])
+            val = decode_float32(raw_regs[offset], raw_regs[offset + 1],
+                                 word_swap)
+        elif rtype in ("INT32", "UINT32"):
+            if offset + 1 >= len(raw_regs):
+                values[name] = 0.0
+                continue
+            # INT32 uses standard word order (MSW@N) even on GE PLCs
+            val = float(decode_int32(raw_regs[offset], raw_regs[offset + 1],
+                                     word_swap=False,
+                                     signed=(rtype == "INT32")))
         elif rtype == "INT16":
             val = float(raw_regs[offset])
         else:
@@ -334,7 +369,8 @@ def decode_registers(raw_regs: List[int], reg_start: int,
 
 
 def decode_registers_from_dict(reg_dict: Dict[int, int],
-                                reg_map: Dict) -> Dict[str, float]:
+                                reg_map: Dict,
+                                word_swap: bool = True) -> Dict[str, float]:
     """Decode named values from a register address->value dict.
 
     Used for multi-block reads where registers are non-contiguous.
@@ -346,9 +382,15 @@ def decode_registers_from_dict(reg_dict: Dict[int, int],
         rtype = info["type"]
 
         if rtype == "FLOAT32":
-            low = reg_dict.get(addr, 0)
-            high = reg_dict.get(addr + 1, 0)
-            val = decode_ge_float32(low, high)
+            word_a = reg_dict.get(addr, 0)
+            word_b = reg_dict.get(addr + 1, 0)
+            val = decode_float32(word_a, word_b, word_swap)
+        elif rtype in ("INT32", "UINT32"):
+            word_a = reg_dict.get(addr, 0)
+            word_b = reg_dict.get(addr + 1, 0)
+            # INT32 uses standard word order (MSW@N) even on GE PLCs
+            val = float(decode_int32(word_a, word_b, word_swap=False,
+                                     signed=(rtype == "INT32")))
         elif rtype == "INT16":
             val = float(reg_dict.get(addr, 0))
         else:
@@ -386,13 +428,17 @@ def discover_registers(client: ModbusTCPClient, scan_start: int = 0,
             if val != 0:
                 reg_addr = addr + i
                 active.append((reg_addr, val))
-                # Try to decode as FLOAT32 if next register also non-zero
+                # Try to decode as FLOAT32 pair (both word orders)
                 if i + 1 < len(regs) and regs[i + 1] != 0:
-                    f32 = decode_ge_float32(val, regs[i + 1])
+                    f32_ge = decode_float32(val, regs[i + 1], word_swap=True)
+                    f32_std = decode_float32(val, regs[i + 1], word_swap=False)
+                    i32 = decode_int32(val, regs[i + 1], word_swap=True)
                     print(f"  R{reg_addr:5d} = 0x{val:04X} "
-                          f"(raw={val}, float32_pair={f32:.4f})")
+                          f"(raw={val}, GE_f32={f32_ge:.4f}, "
+                          f"STD_f32={f32_std:.4f}, i32={i32})")
                 else:
-                    print(f"  R{reg_addr:5d} = 0x{val:04X} (raw={val})")
+                    print(f"  R{reg_addr:5d} = 0x{val:04X} "
+                          f"(raw={val}, int16s={decode_int16_signed(val)})")
         addr += count
         time.sleep(0.05)  # Rate limit over VPN
 
@@ -575,26 +621,39 @@ def format_fault_code(fc: int) -> str:
 
 
 def display_live(values: Dict[str, float], elapsed: float, poll_hz: float,
-                 conn_num: int, row_count: int):
+                 conn_num: int, row_count: int, mapped_fields: set = None):
     """Print live sensor dashboard to console."""
     state = int(values.get("connection_state", 0))
     state_name = CONNECTION_STATE_NAMES.get(state, f"UNK({state})")
     fc = int(values.get("fault_code", 0))
+
+    # Mark unmapped fields with '--' instead of misleading 0.0
+    def v(key, fmt, unit=""):
+        if mapped_fields and key not in mapped_fields:
+            return f"{'--':>{len(fmt.format(0))}}{unit}"
+        return f"{fmt.format(values.get(key, 0))}{unit}"
+
+    if mapped_fields and "connection_state" not in mapped_fields:
+        state_name = "--"
+    if mapped_fields and "fault_code" not in mapped_fields:
+        fc_str = "--"
+    else:
+        fc_str = format_fault_code(fc)
 
     # Build display
     lines = [
         f"\r  [{elapsed:8.1f}s] {poll_hz:5.1f} Hz | "
         f"Conn #{conn_num} | {row_count} rows | "
         f"State: {state_name:12s} | "
-        f"Fault: {format_fault_code(fc):15s}",
-        f"    Torque: {values.get('torque_ftlbs', 0):8.1f} ft-lb | "
-        f"RPM: {values.get('rpm', 0):6.1f} | "
-        f"Pressure: {values.get('pressure_psi', 0):7.1f} PSI | "
-        f"Temp: {values.get('oil_temp_f', 0):5.1f} F",
-        f"    Turns: {values.get('turns', 0):6.3f} | "
-        f"Target: {values.get('target_torque', 0):8.1f} ft-lb | "
-        f"Peak: {values.get('peak_torque', 0):8.1f} ft-lb | "
-        f"Hookload: {values.get('hookload_klbs', 0):6.2f} klbs",
+        f"Fault: {fc_str:15s}",
+        f"    Torque: {v('torque_ftlbs', '{:8.1f}', ' ft-lb')} | "
+        f"RPM: {v('rpm', '{:6.1f}')} | "
+        f"Pressure: {v('pressure_psi', '{:7.1f}', ' PSI')} | "
+        f"Temp: {v('oil_temp_f', '{:5.1f}', ' F')}",
+        f"    Turns: {v('turns', '{:6.3f}')} | "
+        f"Target: {v('target_torque', '{:8.1f}', ' ft-lb')} | "
+        f"Peak: {v('peak_torque', '{:8.1f}', ' ft-lb')} | "
+        f"Hookload: {v('hookload_klbs', '{:6.2f}', ' klbs')}",
     ]
     # Move cursor up and overwrite
     sys.stdout.write(f"\033[3A" if elapsed > 1.0 else "")
@@ -611,6 +670,7 @@ def run_capture(args):
     """Main capture loop with auto-reconnect."""
     # Load register map: profile YAML > JSON > auto-detect by IP > default
     reg_map = None
+    word_swap = True   # Default: GE CPE305 convention
     profile_name = "default"
     unit_id = 1  # Default Modbus unit ID
 
@@ -618,7 +678,7 @@ def run_capture(args):
         # Load from MachineProfile YAML
         try:
             profile = MachineProfile.from_yaml(args.profile)
-            reg_map = reg_map_from_profile(profile)
+            reg_map, word_swap = reg_map_from_profile(profile)
             profile_name = profile.name
             unit_id = profile.unit_id
             print(f"  Loaded machine profile: {profile.name} ({args.profile})")
@@ -635,7 +695,7 @@ def run_capture(args):
         # Try auto-detect by PLC IP from profiles/ directory
         auto_profile = MachineProfile.find_by_ip("profiles", args.host)
         if auto_profile:
-            reg_map = reg_map_from_profile(auto_profile)
+            reg_map, word_swap = reg_map_from_profile(auto_profile)
             profile_name = auto_profile.name
             unit_id = auto_profile.unit_id
             print(f"  Auto-detected profile: {auto_profile.name} "
@@ -645,13 +705,27 @@ def run_capture(args):
         reg_map = DEFAULT_REGISTER_MAP
         print(f"  Using default R6000 register map")
 
+    # Track which fields are actually mapped (vs defaulting to 0)
+    mapped_fields = set(reg_map.keys())
+
+    # Report unmapped critical fields
+    critical = ["connection_state", "fault_code", "target_torque",
+                "peak_torque", "pressure_psi"]
+    missing = [f for f in critical if f not in mapped_fields]
+    if missing:
+        print(f"\n  WARNING: Unmapped fields (will show '--'): "
+              f"{', '.join(missing)}")
+        print(f"  Run --discover to find these registers on the PLC.")
+
+    print(f"  Word swap: {'GE (low@N, high@N+1)' if word_swap else 'Standard IEEE (high@N, low@N+1)'}")
+
     # Compute block reads (supports non-contiguous register maps)
     block_reads = compute_block_reads(reg_map)
 
     # Also compute simple start/count for single-block mode
     all_addrs = [info["addr"] for info in reg_map.values()]
     max_addr = max(
-        info["addr"] + (2 if info["type"] == "FLOAT32" else 1)
+        info["addr"] + (2 if info["type"] in ("FLOAT32", "INT32", "UINT32") else 1)
         for info in reg_map.values()
     )
     reg_start = min(all_addrs)
@@ -747,7 +821,7 @@ def run_capture(args):
             poll_count += 1
             elapsed = time.time() - t_start
             now_str = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
-            values = decode_registers_from_dict(reg_dict, reg_map)
+            values = decode_registers_from_dict(reg_dict, reg_map, word_swap)
         else:
             # Single contiguous block read
             raw_regs = client.read_holding_registers(reg_start, reg_count)
@@ -764,7 +838,7 @@ def run_capture(args):
             poll_count += 1
             elapsed = time.time() - t_start
             now_str = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
-            values = decode_registers(raw_regs, reg_start, reg_map)
+            values = decode_registers(raw_regs, reg_start, reg_map, word_swap)
 
         # Connection segmentation
         event = segmenter.update(values, elapsed)
@@ -783,7 +857,8 @@ def run_capture(args):
         if poll_count % max(1, int(args.hz / 4)) == 0:
             actual_hz = poll_count / max(elapsed, 0.001)
             display_live(values, elapsed, actual_hz,
-                         segmenter.connection_num, total_rows)
+                         segmenter.connection_num, total_rows,
+                         mapped_fields)
 
         # Sleep to maintain target poll rate
         t_poll_end = time.time()

@@ -1,25 +1,5 @@
-# Precision Rig 709 — First field machine via eWon VPN
-# GE CPE305 at 129.168.1.25, unit_id=0, word-swapped FLOAT32
-#
-# Updated 2026-02-25 from TWO differential scans during active threading.
-# Primary sensor block: R162-196
-#
-# Scan evidence:
-#   R163: ~14,160 ft-lbs (torque, CONFIRMED changing)
-#   R165: ~0.44 turns (CONFIRMED changing)
-#   R167: ~128°F (oil temp, CONFIRMED slowly drifting)
-#   R169: ~88 (RPM or 2nd temp — AMBIGUOUS, ask Steve)
-#   R189: ~16,208 lbs hookload (CONFIRMED)
-#   R2078: encoder, monotonically increasing (CONFIRMED)
-#   R162: INT16 [2, 0, 0, 0] across 4 passes — state transition caught!
-#         2=SPIN_IN -> 0=IDLE matches connection_state enum perfectly
-#
-# STILL NEEDED (ask Steve or catch more transitions):
-#   - pressure (PSI) — constant during steady threading, not found
-#   - fault_code — was 0 during normal ops
-#   - target_torque — constant per connection
-#   - Confirm R169 is RPM vs temperature
-#
+# Precision Rig 709 — HXI HT via eWon VPN
+# Updated 2026-02-25 from differential scans during active threading.
 name: precision_rig_709
 plc_ip: "129.168.1.25"
 plc_port: 502
@@ -32,71 +12,36 @@ motor_displacement_cc: 250.0
 max_pressure_psi: 5000.0
 encoder_cpr: 1174
 torque_cell_capacity_ftlbs: 50000.0
-pressure_offset: 0.0
-torque_offset: 0.0
-temp_offset: 0.0
 
 reg_map:
-  # ── CONFIRMED from differential scans ──────────────────────────
   torque:
     address: 163
     data_type: FLOAT32
     unit: ft-lbs
     description: "CONFIRMED — ~14,160 ft-lbs during active threading"
-
-  connection_state:
-    address: 162
-    data_type: INT16
-    description: "HIGH CONFIDENCE — values [2,0,0,0] across 4 passes = SPIN_IN->IDLE transition"
-
   turns:
     address: 165
     data_type: FLOAT32
     unit: turns
-    description: "CONFIRMED — ~0.44 turns, changing across passes"
-
+    description: "CONFIRMED — ~0.44 turns"
   temperature:
     address: 167
     data_type: FLOAT32
     unit: degF
-    description: "CONFIRMED — ~128°F oil/hydraulic fluid temp"
-
+    description: "CONFIRMED — ~128°F oil temp"
+  rpm:
+    address: 169
+    data_type: FLOAT32
+    unit: RPM
+    description: "LIKELY — ~88, needs Steve confirmation (could be 2nd temp)"
   hookload:
     address: 189
     data_type: FLOAT32
     unit: lbs
     scale: 0.001
-    description: "CONFIRMED — ~16,208 lbs (16.2 klbs). Scale 0.001 for klbs output."
-
+    description: "CONFIRMED — ~16,208 lbs → 16.2 klbs"
   encoder_counts:
     address: 2078
     data_type: INT32
     unit: counts
-    description: "CONFIRMED — monotonically increasing [1275, 3764, 8507]"
-
-  # ── AMBIGUOUS — needs Steve to confirm ─────────────────────────
-  rpm:
-    address: 169
-    data_type: FLOAT32
-    unit: RPM
-    description: "AMBIGUOUS — reads ~88. Could be RPM (88 RPM steady threading) or 2nd temp (88°F). Ask Steve."
-
-  # ── TBD — not found in diff scan ───────────────────────────────
-  # pressure:
-  #   address: ???
-  #   data_type: FLOAT32
-  #   unit: PSI
-  #   description: "TBD — constant during steady threading, not in diff results"
-  # fault_code:
-  #   address: ???
-  #   data_type: INT16
-  #   description: "TBD — was 0 during normal operation"
-  # target_torque:
-  #   address: ???
-  #   data_type: FLOAT32
-  #   unit: ft-lbs
-  #   description: "TBD — constant per connection"
-  # operating_mode:
-  #   address: ???
-  #   data_type: INT16
-  #   description: "TBD"
+    description: "CONFIRMED — monotonically increasing"
