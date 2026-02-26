@@ -556,7 +556,8 @@ class StateInferenceEngine:
     SLOPE_WINDOW = 10         # samples for rolling dT/dN
 
     def __init__(self, target_torque: float = 0.0):
-        self.state = 0           # ConnectionState enum value
+        self.state = 0           # ConnectionState enum value (from signal inference)
+        self.plc_state = None    # Raw PLC state for display comparison
         self.connection_num = 0
         self.in_connection = False
 
@@ -631,6 +632,10 @@ class StateInferenceEngine:
                mapped_fields: set = None) -> Tuple[Optional[str], Dict[str, float]]:
         """Update state machine and return (event, inferred_fields).
 
+        ALWAYS uses signal-based inference (torque/rpm/turns patterns).
+        PLC state is stored for display comparison but never drives the
+        state machine — unverified register mappings can be wrong.
+
         Args:
             values: Decoded register values for this poll.
             timestamp: Elapsed time in seconds.
@@ -644,12 +649,11 @@ class StateInferenceEngine:
         turns = values.get("turns", 0.0)
         hookload = values.get("hookload_klbs", 0.0)
 
-        # Use PLC state if available, otherwise infer
-        plc_state = None
+        # Store PLC state for display/logging — NOT used for state machine
         if mapped_fields and "connection_state" in mapped_fields:
-            plc_state = int(values.get("connection_state", 0))
+            self.plc_state = int(values.get("connection_state", 0))
 
-        # Use PLC target_torque if available
+        # Use PLC target_torque if available (reasonable to trust set-points)
         if mapped_fields and "target_torque" in mapped_fields:
             tt = values.get("target_torque", 0.0)
             if tt > 0:
@@ -663,13 +667,6 @@ class StateInferenceEngine:
         self._prev_torque = torque
         self._prev_time = timestamp
 
-        # Track peak torque during active connection
-        if self.in_connection:
-            if torque > self.peak_torque:
-                self.peak_torque = torque
-            if rpm > self.max_rpm:
-                self.max_rpm = rpm
-
         # Rolling buffer for dT/dN
         self._torque_buf.append(torque)
         self._turns_buf.append(turns)
@@ -682,125 +679,111 @@ class StateInferenceEngine:
         current_slope = self._compute_rolling_slope()
         event = None
 
-        # ── State Machine ──────────────────────────────────────
-        if plc_state is not None:
-            # Trust PLC state but still compute derived fields
-            self._transition(plc_state)
-            is_active = plc_state not in (0, 9)
-            if is_active and not self.in_connection:
+        # ── Signal-Based State Machine (always runs) ───────────
+        if self.state == 0:  # IDLE
+            if rpm > self.RPM_ACTIVE and torque > self.TORQUE_ACTIVE:
                 self.in_connection = True
                 self.connection_num += 1
-                self._reset_connection()  # Reset before transition
+                self._reset_connection()
                 self.total_turns_at_start = turns
                 self._conn_start_time = timestamp
-                self._transition(plc_state)  # Add entry state to path
+                self._transition(2)  # SPIN_IN
+                # Track first sample's peak immediately after connection start
+                self.peak_torque = torque
+                self.max_rpm = rpm
                 event = f"CONNECTION_START #{self.connection_num}"
-            elif not is_active and self.in_connection:
-                self._idle_timer += dt
-                if self._idle_timer > self.IDLE_TIMEOUT:
-                    self.in_connection = False
-                    self._idle_timer = 0.0
-                    event = f"CONNECTION_END #{self.connection_num}"
-            else:
-                self._idle_timer = 0.0
-        else:
-            # ── Infer state from signals ──
-            if self.state == 0:  # IDLE
-                if rpm > self.RPM_ACTIVE and torque > self.TORQUE_ACTIVE:
-                    self.in_connection = True
-                    self.connection_num += 1
-                    self._reset_connection()  # Reset before transition
-                    self.total_turns_at_start = turns
-                    self._conn_start_time = timestamp
-                    self._transition(2)  # SPIN_IN
-                    event = f"CONNECTION_START #{self.connection_num}"
 
-            elif self.state == 2:  # SPIN_IN
-                # Build baseline slope from early spin-in
-                if self._baseline_samples < 20 and abs(current_slope) > 0:
-                    self._baseline_slope = (
-                        (self._baseline_slope * self._baseline_samples + abs(current_slope))
-                        / (self._baseline_samples + 1)
-                    )
-                    self._baseline_samples += 1
+        elif self.state == 2:  # SPIN_IN
+            # Build baseline slope from early spin-in
+            if self._baseline_samples < 20 and abs(current_slope) > 0:
+                self._baseline_slope = (
+                    (self._baseline_slope * self._baseline_samples + abs(current_slope))
+                    / (self._baseline_samples + 1)
+                )
+                self._baseline_samples += 1
 
-                # Shoulder detection: slope spike
-                threshold = max(self._baseline_slope * self.SHOULDER_SLOPE_MULT,
-                                500.0)  # Minimum 500 ft-lbs/turn
-                if abs(current_slope) > threshold and not self._shoulder_detected:
+            # Shoulder detection: slope spike
+            threshold = max(self._baseline_slope * self.SHOULDER_SLOPE_MULT,
+                            500.0)  # Minimum 500 ft-lbs/turn
+            if abs(current_slope) > threshold and not self._shoulder_detected:
+                self._shoulder_detected = True
+                self.shoulder_torque = torque
+                self.shoulder_turns = turns
+                self._transition(3)  # SHOULDER
+
+            # Fallback: if torque exceeds 30% of target, assume shoulder passed
+            if (self.target_torque_est > 0 and
+                    torque > 0.30 * self.target_torque_est):
+                if not self._shoulder_detected:
                     self._shoulder_detected = True
                     self.shoulder_torque = torque
                     self.shoulder_turns = turns
-                    self._transition(3)  # SHOULDER
+                self._transition(3)
 
-                # Fallback: if torque exceeds 30% of target, assume shoulder passed
-                if (self.target_torque_est > 0 and
-                        torque > 0.30 * self.target_torque_est):
-                    if not self._shoulder_detected:
-                        self._shoulder_detected = True
-                        self.shoulder_torque = torque
-                        self.shoulder_turns = turns
-                    self._transition(3)
+            self._check_stall(rpm, torque, dt)
 
-                # Check for stall during spin-in
-                self._check_stall(rpm, torque, dt)
+        elif self.state == 3:  # SHOULDER
+            conn_turns = turns - self.total_turns_at_start
+            shoulder_turns = self.shoulder_turns - self.total_turns_at_start
+            if conn_turns > shoulder_turns + 0.1:
+                self._transition(4)  # POWER_TIGHT
+            self._check_stall(rpm, torque, dt)
 
-            elif self.state == 3:  # SHOULDER
-                # Transition to POWER_TIGHT after shoulder region
-                conn_turns = turns - self.total_turns_at_start
-                shoulder_turns = self.shoulder_turns - self.total_turns_at_start
-                if conn_turns > shoulder_turns + 0.1:
-                    self._transition(4)  # POWER_TIGHT
-                self._check_stall(rpm, torque, dt)
+        elif self.state == 4:  # POWER_TIGHT
+            self.slope_dT_dN = current_slope
 
-            elif self.state == 4:  # POWER_TIGHT
-                # Compute slope in power-tight zone
-                self.slope_dT_dN = current_slope
+            # Transition to HOLD: rpm drops, torque near peak
+            if (rpm < self.RPM_STOPPED and self.peak_torque > 0 and
+                    torque > self.HOLD_TORQUE_FRAC * self.peak_torque):
+                self.hold_torque = torque
+                self._transition(5)  # HOLD
+            self._check_stall(rpm, torque, dt)
 
-                # Transition to HOLD: rpm drops, torque near peak
-                if (rpm < self.RPM_STOPPED and self.peak_torque > 0 and
-                        torque > self.HOLD_TORQUE_FRAC * self.peak_torque):
-                    self.hold_torque = torque
-                    self._transition(5)  # HOLD
-                self._check_stall(rpm, torque, dt)
+        elif self.state == 5:  # HOLD
+            self.hold_torque = max(self.hold_torque, torque)
+            # Transition to COMPLETE: torque drops or breakout
+            if torque < 0.80 * self.hold_torque or rpm > self.RPM_ACTIVE:
+                self._transition(9)  # COMPLETE
 
-            elif self.state == 5:  # HOLD
-                self.hold_torque = max(self.hold_torque, torque)
-                # Transition to COMPLETE: torque drops or breakout
-                if torque < 0.80 * self.hold_torque or rpm > self.RPM_ACTIVE:
-                    self._transition(9)  # COMPLETE
+        elif self.state == 9:  # COMPLETE
+            self._idle_timer += dt
+            if (self._idle_timer > self.IDLE_TIMEOUT and
+                    torque < self.TORQUE_ACTIVE and rpm < self.RPM_STOPPED):
+                self._transition(0)  # IDLE
+                self.in_connection = False
+                self._idle_timer = 0.0
+                event = f"CONNECTION_END #{self.connection_num}"
+            elif torque > self.TORQUE_ACTIVE or rpm > self.RPM_ACTIVE:
+                self._idle_timer = 0.0
 
-            elif self.state == 9:  # COMPLETE
-                self._idle_timer += dt
-                if (self._idle_timer > self.IDLE_TIMEOUT and
-                        torque < self.TORQUE_ACTIVE and rpm < self.RPM_STOPPED):
-                    self._transition(0)  # IDLE
-                    self.in_connection = False
-                    self._idle_timer = 0.0
-                    event = f"CONNECTION_END #{self.connection_num}"
-                elif torque > self.TORQUE_ACTIVE or rpm > self.RPM_ACTIVE:
-                    self._idle_timer = 0.0
+        elif self.state == 10:  # STALL
+            if rpm > 2.0:
+                self._transition(3)  # Back to SHOULDER
+                self._stall_timer = 0.0
 
-            elif self.state == 10:  # STALL
-                # Recovery: rpm resumes
-                if rpm > 2.0:
-                    self._transition(3)  # Back to SHOULDER
-                    self._stall_timer = 0.0
+        # ── Track peak AFTER state machine (catches first sample) ──
+        if self.in_connection:
+            if torque > self.peak_torque:
+                self.peak_torque = torque
+            if rpm > self.max_rpm:
+                self.max_rpm = rpm
 
         # ── Heuristic fault detection ──────────────────────────
         self._detect_faults(torque, rpm, turns, timestamp)
 
         # ── Estimate target_torque if not available ────────────
         if self.target_torque_est == 0 and self.state == 5:
-            # First time reaching HOLD — use peak as estimate
             self.target_torque_est = self.peak_torque
 
         # ── Build inferred fields dict ─────────────────────────
-        inferred = {}
-        if not mapped_fields or "connection_state" not in mapped_fields:
-            inferred["connection_state"] = float(self.state)
-        if not mapped_fields or "peak_torque" not in mapped_fields:
-            inferred["peak_torque"] = self.peak_torque
+        # Always override connection_state with signal-based inference
+        # (PLC state is unverified and saved as raw_RXXX for comparison)
+        inferred = {
+            "connection_state": float(self.state),
+            "peak_torque": self.peak_torque,
+            "operating_mode": 1.0 if self.in_connection else 0.0,
+        }
+        # These fields: use PLC if mapped, otherwise use engine's values
         if not mapped_fields or "shoulder_torque" not in mapped_fields:
             inferred["shoulder_torque"] = self.shoulder_torque
         if not mapped_fields or "slope_dT_dN" not in mapped_fields:
@@ -809,8 +792,6 @@ class StateInferenceEngine:
             inferred["fault_code"] = float(self.inferred_fault)
         if not mapped_fields or "target_torque" not in mapped_fields:
             inferred["target_torque"] = self.target_torque_est
-        if not mapped_fields or "operating_mode" not in mapped_fields:
-            inferred["operating_mode"] = 1.0 if self.in_connection else 0.0
         if not mapped_fields or "pressure_psi" not in mapped_fields:
             inferred["pressure_psi"] = 0.0  # No sensor = leave as 0
 
@@ -1049,15 +1030,15 @@ def display_live(values: Dict[str, float], elapsed: float, poll_hz: float,
     else:
         fc_str = format_fault_code(fc)
 
-    # Smart mode: show inferred state with marker
+    # Smart mode: always show signal-inferred state, PLC state alongside
     if engine is not None:
         inferred_state = engine.state
         inferred_name = CONNECTION_STATE_NAMES.get(inferred_state, f"?{inferred_state}")
-        if mapped_fields and "connection_state" in mapped_fields:
-            # Show both PLC and inferred
-            state_label = f"{state_name}({inferred_name})"
+        if engine.plc_state is not None:
+            plc_name = CONNECTION_STATE_NAMES.get(engine.plc_state, f"?{engine.plc_state}")
+            state_label = f"{inferred_name} [PLC:{plc_name}]"
         else:
-            state_label = f"*{inferred_name}"  # * = inferred
+            state_label = f"{inferred_name}"
     else:
         state_label = state_name
 
@@ -1709,6 +1690,320 @@ def build_dataset(args):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Multi-Rig Concurrent Capture
+# ═══════════════════════════════════════════════════════════════════
+
+def _rig_worker(profile_path: str, profile: 'MachineProfile',
+                shared_state: dict, running_flag: list,
+                args) -> None:
+    """Capture worker thread for one rig. Updates shared_state dict."""
+    name = profile.name
+    reg_map, word_swap = reg_map_from_profile(profile)
+    unit_id = profile.unit_id
+    mapped_fields = set(reg_map.keys())
+    smart_mode = args.smart
+
+    # Block reads with smart mode expansion
+    block_reads = compute_block_reads(reg_map)
+    all_addrs = [info["addr"] for info in reg_map.values()]
+
+    if smart_mode:
+        sorted_addrs = sorted(all_addrs)
+        clusters = [[sorted_addrs[0]]]
+        for a in sorted_addrs[1:]:
+            if a - clusters[-1][-1] > 50:
+                clusters.append([a])
+            else:
+                clusters[-1].append(a)
+        padded_blocks = []
+        for cluster in clusters:
+            pad_start = max(0, min(cluster) - 3)
+            pad_end = max(cluster) + 12
+            for info in reg_map.values():
+                if info["addr"] in cluster and info["type"] in ("FLOAT32", "INT32", "UINT32"):
+                    pad_end = max(pad_end, info["addr"] + 2 + 10)
+            padded_blocks.append((pad_start, pad_end - pad_start))
+        final_blocks = []
+        for bs, bc in padded_blocks:
+            while bc > 125:
+                final_blocks.append((bs, 125))
+                bs += 125
+                bc -= 125
+            final_blocks.append((bs, bc))
+        block_reads = final_blocks
+
+    # Client, engine, writer — all per-rig
+    client = ModbusTCPClient(profile.plc_ip, profile.plc_port or 502,
+                              timeout=args.timeout, unit_id=unit_id)
+    engine = StateInferenceEngine() if smart_mode else None
+    segmenter = engine if engine else ConnectionSegmenter()
+    rig_output = os.path.join(args.output, name)
+    seg_mode = "segmented" if smart_mode else args.segment_mode
+    writer = LiveCSVWriter(rig_output, mode=seg_mode, prefix="capture")
+    writer.start()
+
+    poll_interval = 1.0 / args.hz
+    poll_count = 0
+    poll_errors = 0
+    total_rows = 0
+    t_start = time.time()
+    reconnect_delay = 1.0
+
+    while running_flag[0]:
+        # Connect / reconnect
+        if not client.connected:
+            if client.connect():
+                shared_state["connected"] = True
+                shared_state["error"] = None
+                reconnect_delay = 1.0
+            else:
+                shared_state["connected"] = False
+                shared_state["error"] = f"Retry {reconnect_delay:.0f}s"
+                wait_until = time.time() + reconnect_delay
+                while running_flag[0] and time.time() < wait_until:
+                    time.sleep(0.5)
+                reconnect_delay = min(reconnect_delay * 2, 30.0)
+                continue
+
+        t_poll_start = time.time()
+
+        # Read all blocks
+        reg_dict = {}
+        read_ok = True
+        for bstart, bcount in block_reads:
+            regs = client.read_holding_registers(bstart, bcount)
+            if regs is None:
+                read_ok = False
+                break
+            for i, val in enumerate(regs):
+                reg_dict[bstart + i] = val
+
+        if not read_ok:
+            poll_errors += 1
+            if poll_errors > 3:
+                client.close()
+                shared_state["connected"] = False
+                poll_errors = 0
+            continue
+
+        poll_errors = 0
+        poll_count += 1
+        elapsed = time.time() - t_start
+        now_str = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
+        values = decode_registers_from_dict(reg_dict, reg_map, word_swap)
+
+        # Raw registers in smart mode
+        if smart_mode:
+            decoded_addrs = set()
+            for info in reg_map.values():
+                a = info["addr"]
+                decoded_addrs.add(a)
+                if info["type"] in ("FLOAT32", "INT32", "UINT32"):
+                    decoded_addrs.add(a + 1)
+            for addr, val in sorted(reg_dict.items()):
+                if addr not in decoded_addrs and val != 0:
+                    values[f"raw_R{addr}"] = float(decode_int16_signed(val))
+
+        # State inference
+        if engine:
+            event, inferred = engine.update(values, elapsed, mapped_fields)
+            values.update(inferred)
+        else:
+            event = segmenter.update(values, elapsed)
+
+        if event:
+            if "START" in event:
+                writer.new_connection(segmenter.connection_num)
+            elif "END" in event:
+                if engine:
+                    meta = engine.get_connection_metadata(elapsed)
+                    sp = writer._current_path
+                    if sp:
+                        try:
+                            with open(sp.with_suffix('.json'), 'w') as jf:
+                                json.dump(meta, jf, indent=2)
+                        except Exception:
+                            pass
+                writer.end_connection()
+
+        # Idle decimation in smart mode
+        skip_write = False
+        if smart_mode and engine and engine.state == 0 and not engine.in_connection:
+            if total_rows % 10 != 0:
+                skip_write = True
+
+        if not skip_write:
+            writer.write_row(values, now_str, elapsed)
+        total_rows += 1
+
+        # Update shared state for display
+        shared_state["values"] = values
+        shared_state["elapsed"] = elapsed
+        shared_state["hz"] = poll_count / max(elapsed, 0.001)
+        shared_state["conn_num"] = segmenter.connection_num
+        shared_state["rows"] = total_rows
+        shared_state["engine"] = engine
+        shared_state["mapped_fields"] = mapped_fields
+
+        # Sleep to maintain target rate
+        sleep_time = poll_interval - (time.time() - t_poll_start)
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+    # Cleanup
+    writer.close()
+    client.close()
+
+
+def display_multi_rigs(rig_states: dict, first_draw: list):
+    """Render compact multi-rig dashboard."""
+    lines_per_rig = 3
+    total_lines = len(rig_states) * lines_per_rig + 1  # +1 for header
+
+    # Move cursor up to overwrite (skip on first draw)
+    if first_draw[0]:
+        first_draw[0] = False
+    else:
+        sys.stdout.write(f"\033[{total_lines}A")
+
+    sys.stdout.write(f"\033[K  {'─' * 70}\n")
+
+    for name, state in sorted(rig_states.items()):
+        conn_str = "OK" if state.get("connected") else state.get("error", "---")
+        elapsed = state.get("elapsed", 0.0)
+        hz = state.get("hz", 0.0)
+        rows = state.get("rows", 0)
+        conn_num = state.get("conn_num", 0)
+        vals = state.get("values", {})
+        engine = state.get("engine")
+
+        # State display
+        if engine:
+            st = engine.state
+            st_name = CONNECTION_STATE_NAMES.get(st, f"?{st}")
+            if engine.plc_state is not None:
+                plc_name = CONNECTION_STATE_NAMES.get(engine.plc_state, "?")
+                state_str = f"{st_name}[PLC:{plc_name}]"
+            else:
+                state_str = st_name
+            path_str = ">".join(
+                CONNECTION_STATE_NAMES.get(s, "?")[:3]
+                for s in engine.state_path[-5:]
+            )
+        else:
+            st = int(vals.get("connection_state", 0))
+            state_str = CONNECTION_STATE_NAMES.get(st, f"?{st}")
+            path_str = ""
+
+        torque = vals.get("torque_ftlbs", 0.0)
+        rpm_val = vals.get("rpm", 0.0)
+        turns = vals.get("turns", 0.0)
+        peak = vals.get("peak_torque", 0.0)
+        target = vals.get("target_torque", 0.0)
+        raw_count = sum(1 for k in vals if k.startswith("raw_R"))
+
+        sys.stdout.write(
+            f"\033[K  {name[:25]:25s} | {conn_str:5s} | "
+            f"{elapsed:7.0f}s {hz:4.1f}Hz | "
+            f"Conn #{conn_num} {rows}rows | "
+            f"State: {state_str}\n"
+        )
+        sys.stdout.write(
+            f"\033[K    Torque:{torque:8.0f} RPM:{rpm_val:5.1f} "
+            f"Turns:{turns:6.3f} Peak:{peak:8.0f} "
+            f"Target:{target:8.0f} Raw:{raw_count}\n"
+        )
+        sys.stdout.write(
+            f"\033[K    Path: {path_str:30s}\n"
+        )
+
+    sys.stdout.flush()
+
+
+def run_multi_capture(args):
+    """Capture from all rigs with profiles concurrently."""
+    profile_dir = args.profile_dir
+
+    # Load all profiles with real IPs (skip 127.0.0.1 simulator)
+    profiles = []
+    for f in sorted(Path(profile_dir).glob("*.yaml")):
+        try:
+            p = MachineProfile.from_yaml(str(f))
+            if p.plc_ip and p.plc_ip != "127.0.0.1":
+                profiles.append((str(f), p))
+        except Exception as e:
+            print(f"  WARNING: Skipping {f.name}: {e}")
+
+    if not profiles:
+        print(f"\n  No profiles with real PLC IPs found in {profile_dir}/")
+        print(f"  (Profiles pointing to 127.0.0.1 are skipped)")
+        return
+
+    print(f"\n" + "=" * 60)
+    print(f"  PLC Live Data Capture — Multi-Rig Mode")
+    print(f"=" * 60)
+    mode_str = "SMART" if args.smart else "STANDARD"
+    print(f"  Mode:       {mode_str}")
+    print(f"  Target Hz:  {args.hz}")
+    print(f"  Output:     {args.output}/")
+    print(f"\n  Rigs ({len(profiles)}):")
+    for path, p in profiles:
+        print(f"    - {p.name:25s} @ {p.plc_ip}:{p.plc_port or 502}")
+    print()
+
+    # Shared state dicts and running flag
+    running_flag = [True]  # Mutable list so threads can see changes
+    rig_states = {}
+
+    threads = []
+    for path, profile in profiles:
+        state = {
+            "connected": False, "values": {}, "elapsed": 0.0,
+            "hz": 0.0, "conn_num": 0, "rows": 0, "engine": None,
+            "error": "Starting...", "mapped_fields": set()
+        }
+        rig_states[profile.name] = state
+        t = threading.Thread(
+            target=_rig_worker,
+            args=(path, profile, state, running_flag, args),
+            daemon=True, name=f"rig-{profile.name}"
+        )
+        threads.append(t)
+
+    # Start all capture threads
+    for t in threads:
+        t.start()
+
+    # Display loop (main thread)
+    first_draw = [True]
+    try:
+        time.sleep(1)  # Let threads connect
+        print("  Capturing... (Ctrl+C to stop)\n")
+        # Pre-fill blank lines for ANSI overwrite
+        total_display_lines = len(rig_states) * 3 + 1
+        for _ in range(total_display_lines):
+            print()
+        while running_flag[0]:
+            display_multi_rigs(rig_states, first_draw)
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        running_flag[0] = False
+        print(f"\n\n  Stopping all captures...")
+
+    # Wait for threads
+    for t in threads:
+        t.join(timeout=5)
+
+    # Summary
+    print(f"\n  Multi-rig capture complete:")
+    for name, state in sorted(rig_states.items()):
+        print(f"    {name:25s}: {state['rows']:6d} rows, "
+              f"{state['elapsed']:.0f}s, "
+              f"{state.get('conn_num', 0)} connections")
+    print(f"    Output: {args.output}/")
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Entry Point
 # ═══════════════════════════════════════════════════════════════════
 
@@ -1726,6 +2021,12 @@ Examples:
 
   # Smart capture: infers state, segments connections, writes metadata
   python capture_live.py --host 10.0.0.1 --smart
+
+  # Multi-rig: capture all profiles concurrently
+  python capture_live.py --multi --smart
+
+  # Multi-rig with custom profiles directory
+  python capture_live.py --multi --smart --profile-dir ./profiles
 
   # Build training dataset from captured connections
   python capture_live.py --build-dataset --input ./live_captures --output ./data/live_rig709
@@ -1771,6 +2072,12 @@ Examples:
                         help="Enable smart capture: state inference, auto-segmentation, "
                              "JSON metadata, idle decimation")
 
+    # Multi-rig concurrent capture
+    parser.add_argument("--multi", action="store_true",
+                        help="Capture from all rigs concurrently (reads all profiles)")
+    parser.add_argument("--profile-dir", default="./profiles",
+                        help="Directory with .yaml profiles for --multi (default: ./profiles)")
+
     # Dataset builder mode
     parser.add_argument("--build-dataset", action="store_true",
                         help="Build training dataset from captured connection CSVs")
@@ -1793,9 +2100,15 @@ Examples:
         build_dataset(args)
         return
 
+    # Multi-rig mode (no --host needed, uses all profiles)
+    if args.multi:
+        run_multi_capture(args)
+        return
+
     # All other modes require --host
     if not args.host:
-        parser.error("--host is required for capture and discovery modes")
+        parser.error("--host is required for capture and discovery modes "
+                     "(or use --multi for all rigs)")
 
     print("\n" + "=" * 60)
     print("  PLC Live Data Capture — Modbus TCP")
