@@ -1759,9 +1759,9 @@ def _detect_equipment_type(device_name: str, description: str = "") -> str:
 
     # HXI variants (most specific first)
     if "HXI" in text:
-        if any(kw in text for kw in ("HT", "3SPD", "3 SPD")):
+        if any(kw in text for kw in ("HT", "3SPD", "3 SPD", "3PD")):
             return "hxi_ht"
-        if any(kw in text for kw in ("SMART SLIDE", "HXI SS", " SS")):
+        if any(kw in text for kw in ("SMART SLIDE", "HXI SS", " SS ")):
             return "hxi_ss"
         if "RELAY" in text:
             return "hxi_relay"
@@ -1772,19 +1772,20 @@ def _detect_equipment_type(device_name: str, description: str = "") -> str:
         return "exi"
     if "FDS" in text:
         return "fds"
-    if "ROSTEL" in text:
+    if "ROSTEL" in text or "RSTI" in text:
         return "rostel"
     if "WARRIOR" in text:
         return "warrior"
     if "SMART DRIVE" in text:
         return "smart_drive"
-    if "ECI" in text:
+    # Use word boundary to avoid "PRECISION" matching "ECI"
+    if re.search(r"\bECI\b", text):
         return "eci"
-    if "EMI" in text:
+    if re.search(r"\bEMI\b", text):
         return "emi"
-    if "HCI" in text:
+    if re.search(r"\bHCI\b", text):
         return "hci"
-    if "HMI" in text:
+    if re.search(r"\bHMI\b", text):
         return "hmi"
     if "POWERRIG" in text or "POWER RIG" in text:
         if "EXI" in description.upper():
@@ -1844,28 +1845,42 @@ def _load_ewon_fleet(fleet_path: str = None) -> List[Dict]:
 
 def _match_fleet_entry(device_name: str,
                         fleet: List[Dict]) -> Optional[Dict]:
-    """Find best fleet entry match for an eWon device name."""
+    """Find best fleet entry match for an eWon device name.
+
+    Match priority: exact > case-insensitive > longest partial.
+    For partial matches, picks the LONGEST fleet name that is a substring
+    of the device name (or vice versa), so "Precision Rig 709 HXI HT"
+    beats "Precision Rig 709" when searching for "Precision Rig 709 HXI HT".
+    """
     import re
     dn = device_name.strip()
     dn_upper = dn.upper()
     dn_norm = re.sub(r'\s+', ' ', dn_upper)
 
-    # Exact match
+    # Pass 1: Exact match (case-sensitive)
     for entry in fleet:
         if entry.get("ewon_name", "").strip() == dn:
             return entry
 
-    # Case-insensitive normalised match
+    # Pass 2: Case-insensitive normalised exact match
     for entry in fleet:
         en = re.sub(r'\s+', ' ', entry.get("ewon_name", "").strip().upper())
         if en == dn_norm:
             return entry
 
-    # Partial match — device name contains fleet name or vice versa
+    # Pass 3: Partial match — collect ALL matches, return LONGEST (most specific)
+    candidates = []
     for entry in fleet:
         en = entry.get("ewon_name", "").strip().upper()
         if en and len(en) > 5 and (en in dn_upper or dn_upper in en):
-            return entry
+            candidates.append(entry)
+
+    if candidates:
+        # Sort by ewon_name length descending — longest name = most specific
+        candidates.sort(
+            key=lambda e: len(e.get("ewon_name", "")), reverse=True
+        )
+        return candidates[0]
 
     return None
 
@@ -1884,6 +1899,139 @@ def _find_profile_by_ewon(profile_dir: str,
         except Exception:
             continue
     return None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# eWon Connection Tracker — logs which devices connect and when
+# ═══════════════════════════════════════════════════════════════════
+
+CONNECTION_LOG_FILE = "connection_log.json"
+
+
+def _get_connection_log_path(profile_dir: str = None) -> str:
+    """Return path to the connection log file."""
+    if profile_dir is None:
+        profile_dir = str(Path(__file__).parent / "profiles")
+    return str(Path(profile_dir) / CONNECTION_LOG_FILE)
+
+
+def _load_connection_log(profile_dir: str = None) -> Dict:
+    """Load the connection log. Structure:
+    {
+        "devices": {
+            "Precision Rig 709 HXI HT": {
+                "equipment_type": "hxi_ht",
+                "customer": "Precision",
+                "first_seen": "2026-02-26T14:30:00",
+                "last_seen": "2026-02-26T16:45:00",
+                "total_connections": 5,
+                "sessions": [
+                    {
+                        "connected_at": "2026-02-26T14:30:00",
+                        "disconnected_at": "2026-02-26T15:00:00",
+                        "plc_ip": "129.168.1.25",
+                        "profile": "precision_rig_709_hxi_ht.yaml",
+                        "connections_captured": 12
+                    }
+                ]
+            }
+        }
+    }
+    """
+    log_path = _get_connection_log_path(profile_dir)
+    try:
+        with open(log_path, 'r', encoding='utf-8') as f:
+            return json.loads(f.read())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"devices": {}}
+
+
+def _save_connection_log(log: Dict, profile_dir: str = None) -> None:
+    """Save the connection log to disk."""
+    log_path = _get_connection_log_path(profile_dir)
+    Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(log, indent=2))
+
+
+def log_connection_event(ewon_name: str, plc_ip: str,
+                          event: str = "connect",
+                          equipment_type: str = "",
+                          customer: str = "",
+                          profile_name: str = "",
+                          connections_captured: int = 0,
+                          profile_dir: str = None) -> None:
+    """Record a connection or disconnection event for an eWon device.
+
+    event: "connect" or "disconnect"
+    """
+    from datetime import datetime
+    log = _load_connection_log(profile_dir)
+    now = datetime.now().isoformat(timespec='seconds')
+
+    devices = log.setdefault("devices", {})
+    dev = devices.setdefault(ewon_name, {
+        "equipment_type": equipment_type or "unknown",
+        "customer": customer or "",
+        "first_seen": now,
+        "last_seen": now,
+        "total_connections": 0,
+        "sessions": [],
+    })
+
+    # Update metadata if provided (may have been unknown before)
+    if equipment_type:
+        dev["equipment_type"] = equipment_type
+    if customer:
+        dev["customer"] = customer
+    dev["last_seen"] = now
+
+    if event == "connect":
+        dev["total_connections"] = dev.get("total_connections", 0) + 1
+        dev["sessions"].append({
+            "connected_at": now,
+            "disconnected_at": None,
+            "plc_ip": plc_ip,
+            "profile": profile_name,
+            "connections_captured": 0,
+        })
+    elif event == "disconnect":
+        # Close the most recent open session
+        for session in reversed(dev.get("sessions", [])):
+            if session.get("disconnected_at") is None:
+                session["disconnected_at"] = now
+                if connections_captured > 0:
+                    session["connections_captured"] = connections_captured
+                break
+
+    # Keep only last 100 sessions per device to prevent unbounded growth
+    if len(dev.get("sessions", [])) > 100:
+        dev["sessions"] = dev["sessions"][-100:]
+
+    _save_connection_log(log, profile_dir)
+
+
+def show_connection_history(profile_dir: str = None) -> None:
+    """Print a summary of all known eWon device connections."""
+    log = _load_connection_log(profile_dir)
+    devices = log.get("devices", {})
+    if not devices:
+        print("  No connection history recorded yet.")
+        return
+
+    print(f"\n  {'eWon Device':<35} {'Type':<10} {'Customer':<12} "
+          f"{'Sessions':>8} {'First Seen':<20} {'Last Seen':<20}")
+    print(f"  {'-'*35} {'-'*10} {'-'*12} {'-'*8} {'-'*20} {'-'*20}")
+    for name, dev in sorted(devices.items()):
+        etype = dev.get("equipment_type", "?")
+        cust = dev.get("customer", "?")
+        nsess = dev.get("total_connections", 0)
+        first = dev.get("first_seen", "?")
+        last = dev.get("last_seen", "?")
+        print(f"  {name:<35} {etype:<10} {cust:<12} "
+              f"{nsess:>8} {first:<20} {last:<20}")
+
+    print(f"\n  Total devices tracked: {len(devices)}")
 
 
 def _create_rig_profile(ip: str, port: int, device_name: str,
@@ -1908,18 +2056,21 @@ def _create_rig_profile(ip: str, port: int, device_name: str,
     else:
         customer, rig_id = _parse_rig_name(device_name)
 
-    # Build a clean profile name
+    # Build a clean profile name (include equipment type to distinguish variants)
     cust_clean = re.sub(r'[^a-z0-9]', '_', customer.lower()).strip('_')
     rig_clean = re.sub(r'[^a-z0-9]', '_', rig_id.lower()).strip('_')
+    etype_suffix = ""
+    if equipment_type and equipment_type not in ("unknown", ""):
+        etype_suffix = f"_{equipment_type}"
     if rig_clean and cust_clean:
-        prof_name = f"{cust_clean}_rig_{rig_clean}"
+        prof_name = f"{cust_clean}_rig_{rig_clean}{etype_suffix}"
     elif cust_clean:
-        prof_name = f"{cust_clean}"
+        prof_name = f"{cust_clean}{etype_suffix}"
     else:
         # Fallback: use IP-based name (avoid duplication)
-        prof_name = f"rig_{ip.replace('.', '_')}"
+        prof_name = f"rig_{ip.replace('.', '_')}{etype_suffix}"
     # Truncate to avoid absurdly long filenames
-    prof_name = prof_name[:40]
+    prof_name = prof_name[:50]
 
     # Build register map from template if available
     template = EQUIPMENT_REG_TEMPLATES.get(equipment_type)
@@ -2653,6 +2804,14 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
                 prof.to_yaml(prof_path)
             print(f"    {ip} — KNOWN: {prof.name} "
                   f"(matched by eWon name \"{device_name}\")")
+            # Log connection event
+            log_connection_event(
+                ewon_name=device_name, plc_ip=ip, event="connect",
+                equipment_type=getattr(prof, 'equipment_type', ''),
+                customer=getattr(prof, 'customer', ''),
+                profile_name=Path(prof_path).name,
+                profile_dir=profile_dir,
+            )
             results.append((prof_path, prof))
             continue
 
@@ -2674,6 +2833,14 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
             profile_dir=profile_dir,
             unit_id=uid,
             word_swap=ws,
+        )
+        # Log first connection for this new device
+        log_connection_event(
+            ewon_name=device_name, plc_ip=ip, event="connect",
+            equipment_type=getattr(prof, 'equipment_type', ''),
+            customer=getattr(prof, 'customer', ''),
+            profile_name=Path(prof_path).name,
+            profile_dir=profile_dir,
         )
         results.append((prof_path, prof))
 
@@ -2774,6 +2941,16 @@ def run_multi_capture(args):
     for t in threads:
         t.join(timeout=5)
 
+    # Log disconnect events for all rigs
+    for path, profile in profiles:
+        ewon = getattr(profile, 'ewon_name', '') or profile.name
+        state = rig_states.get(profile.name, {})
+        log_connection_event(
+            ewon_name=ewon, plc_ip=profile.plc_ip, event="disconnect",
+            connections_captured=state.get('conn_num', 0),
+            profile_dir=profile_dir,
+        )
+
     print(f"\n  Multi-rig capture complete:")
     for name, state in sorted(rig_states.items()):
         scan_info = f" ({state['scan_regs']} regs)" if state.get('scan_regs') else ""
@@ -2861,6 +3038,10 @@ Examples:
     parser.add_argument("--profile-dir", default="./profiles",
                         help="Directory with .yaml profiles for --multi (default: ./profiles)")
 
+    # Connection history
+    parser.add_argument("--connection-history", action="store_true",
+                        help="Show eWon connection history (which devices connected and when)")
+
     # Dataset builder mode
     parser.add_argument("--build-dataset", action="store_true",
                         help="Build training dataset from captured connection CSVs")
@@ -2874,6 +3055,14 @@ Examples:
                         help="Rig name tag for manifest metadata")
 
     args = parser.parse_args()
+
+    # Connection history mode (no PLC connection needed)
+    if args.connection_history:
+        print("\n" + "=" * 60)
+        print("  eWon Connection History")
+        print("=" * 60)
+        show_connection_history(args.profile_dir)
+        return
 
     # Dataset builder mode (no PLC connection needed)
     if args.build_dataset:

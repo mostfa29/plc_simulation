@@ -1,131 +1,88 @@
-status,ewon_name,description,customer,equipment_type
-Online,AAA_SHOP_COMMISSION_UNIT,,CanGlobal,shop
-Offline,AAAAAAAAAAAAShop 2514-1539-24,,CanGlobal,shop
-Offline,AAAAAASHOP 1751-0042-59,HXI,CanGlobal,hxi
-Offline,AAAAAShop 2523-0667-24,,CanGlobal,shop
-Offline,AAAASHOP_12 1939-0027-24,,CanGlobal,shop
-Offline,AAAASHOP_13 1936-0016-24,,CanGlobal,shop
-Offline,AAAASHOP_14 1802-0014-56,,CanGlobal,shop
-Offline,AAAA shop 2042-0185-24,,CanGlobal,shop
-Offline,AAAA Shop 2317-1373-24 - HXI SS Kit,,CanGlobal,hxi_ss
-Offline,AAAA shop 2407-0551-24,,CanGlobal,shop
-Offline,AAAA Shop 2407-1471-24,HXI,CanGlobal,hxi
-Offline,AAAASHOP 2420-1488-24,,CanGlobal,shop
-Online,AAAA SHOP COZY UNIT MY OFFICE,,CanGlobal,shop
-Online,AAAA SHOP PORTABLE UNIT 2242-1162-22,,CanGlobal,shop
-Offline,AAAA TEST UNIT,,CanGlobal,shop
-Offline,AAAShop12 2407-1689-24,,CanGlobal,shop
-Offline,AAASHop 2407-0555-24,,CanGlobal,shop
-Offline,AAA SHOP COZY 3,,CanGlobal,shop
-Offline,Akita R523 EXI 800HP,,Akita,exi
-Online,Akita Rig 14,HXI relay logic,Akita,hxi
-Offline,Alliance Rig 3,Relay Logic HXI,Alliance,hxi
-Offline,Atlas Drilling Rig 005 HCI,Atlas Drilling Rig 003,Atlas,hci
-Offline,Atlas Rig 15,HXI,Atlas,hxi
-Online,Atlas Rig 2,HXI Smart Slide,Atlas,hxi_ss
-Offline,Atlas Rig 3,HXI PLC,Atlas,hxi
-Offline,Atlas Rig 7 HCI Smart Slide,,Atlas,hci
-Offline,Atlas Spare,,Atlas,unknown
-Offline,Back to shop for testing,HXI Smart Slide,CanGlobal,hxi_ss
-Offline,Canadian Global Shop ECI,ECI,CanGlobal,eci
-Offline,CanGlobal Shop,Smart Drive 005 900hp,CanGlobal,smart_drive
-Offline,CanGlobal shop 2,old PowerRig 009 Rx3i,CanGlobal,powerrig
-Offline,CanGlobal USA Technician eWON,CanGlobal Technician eWON,CanGlobal,gateway
-Offline,CG Shop,,CanGlobal,shop
-Offline,Dafora Rig 10,Romania,Dafora,unknown
-Offline,Ensign Energy Rig 931,Smart Drive 002 1350hp,Ensign,smart_drive
-Online,Ensign Rig 420,HXI Smart Slide,Ensign,hxi_ss
-Offline,ENSIGN RIG 438,HXI SMART SLIDE,Ensign,hxi_ss
-Offline,Ensign Rig 963,EXI800 HP,Ensign,exi
-Offline,ENSIGN T401 HXI,HXI SS,Ensign,hxi_ss
-Offline,ENSIGN T418 HXI HT,HXI 3SPD HT SMART SLIDE,Ensign,hxi_ht
-Online,Ensign T419 HXI 3Spd HT,Trinidad T418 HXI 3Spd HT,Ensign,hxi_ht
-Online,Ensign T432,HXI Smart Slide,Ensign,hxi_ss
-Offline,Ensign T434 HXI HT,Ensign T434 Rx3i,Ensign,hxi_ht
-Offline,Excalibur Rig 10,HXI,Excalibur,hxi
-Offline,Excalibur Rig 11,,Excalibur,unknown
-Offline,Excalibur Rig 12,Excalibur HXI Smart Slide Rental,Excalibur,hxi_ss
-Online,Excalibur Rig 14,HXI,Excalibur,hxi
-Online,Field Truck Remote Access,,CanGlobal,gateway
-Offline,Fox Drilling Rig 001,Fox Drilling 001,Fox,unknown
-Online,Fox Drilling Rig 003,Fox Drilling Rig 003,Fox,unknown
-Online,Fox Drilling Rig 004,Portable Wireless System,Fox,unknown
-Offline,Fox Drilling Rig 005,Fox Drilling Rig 005,Fox,unknown
-Online,Fox Drilling Rig 006,Integrated Wireless System,Fox,unknown
-Offline,Fox Drilling Rig 007,Fox Drilling Rig 007,Fox,unknown
-Online,Fox Drilling Rig 008,Integrated Wireless system,Fox,unknown
-Offline,Fox Rig 6 IR,,Fox,unknown
-Offline,Horizon Rig 34,Horizon Rig 34 Rx3i HMI TD,Horizon,hmi
-Offline,John Energy Rig 16,ECI Smart Drive 007,John Energy,eci
-Offline,OMV,EMI400 CE ATEX,OMV,emi
-Offline,OPTIMUM HXI IRAQ,Optimum,Optimum,hxi
-Online,Panther Rig 2,Relay Logic HXI,Panther,hxi
-Offline,Panther Rig 3,,Panther,unknown
-Online,PowerRig-001 EXI,Smart Slide ready EXI,PowerRig,exi
-Offline,PowerRig002 EXI SS Rental,PowerRig 002 Rx3i,PowerRig,exi
-Offline,PowerRig003,PowerRig003 Rx3i,PowerRig,powerrig
-Offline,PowerRig 004 EXI SS Rental,Smart Sliide Ready EXI,PowerRig,exi
-Offline,PowerRig 005 EXI SS Rental,Smart Slide Ready EXI,PowerRig,exi
-Offline,PowerRig new backup,,PowerRig,unknown
-Online,PowerRig Rig 7,Smart Slide RsTi TDS11,PowerRig,rostel
-Offline,PowerRig SPARE,PowerRig Alternate,PowerRig,unknown
-Online,Precision Rig 116,Rostel Rx3i,Precision,rostel
-Online,Precision Rig 146,Rostel,Precision,rostel
-Online,Precision Rig 148 Rostel,Rostel,Precision,rostel
-Offline,Precision Rig 150,Rostel,Precision,rostel
-Offline,Precision Rig 151 new,,Precision,unknown
-Online,Precision Rig 185,Rostel Top Drive,Precision,rostel
-Offline,Precision Rig 191,Rostel,Precision,rostel
-Offline,Precision Rig 192,Rostel Smart Slide,Precision,rostel
-Online,Precision Rig 195,,Precision,unknown
-Offline,Precision Rig 199,Rostel Smart Slide,Precision,rostel
-Online,Precision Rig 220,3 SPD HT,Precision,hxi_ht
-Offline,Precision Rig 225 HXI HT,HXI SS ST 2SPD,Precision,hxi_ht
-Online,Precision Rig 226,Rig 226 Smart Slide EXI,Precision,exi
-Online,Precision Rig 231 new,HXI HT,Precision,hxi_ht
-Offline,Precision Rig 254 Mobile,Rostel Mobile Unit,Precision,rostel
-Offline,Precision Rig 290,Precision Rig 290 Rx3i,Precision,unknown
-Online,Precision Rig 294,Rostel,Precision,rostel
-Offline,Precision Rig 309 HT,HXI HT,Precision,hxi_ht
-Online,Precision Rig 395,HXI,Precision,hxi
-Offline,Precision Rig 403,HXI Smart Slide Rx3i,Precision,hxi_ss
-Offline,Precision Rig 701,HXI top drive,Precision,hxi
-Offline,Precision Rig 702,,Precision,unknown
-Offline,Precision Rig 703 HXI,HXI Smart Slide,Precision,hxi_ss
-Connected,Precision Rig 706,HXI Standard,Precision,hxi
-Online,Precision Rig 707 3pd HT,HXI HT,Precision,hxi_ht
-Offline,Precision Rig 708,HXI PLC old Ironhand 108,Precision,hxi
-Offline,Precision Rig 709,Warrior 250T,Precision,warrior
-Online,Precision Rig 709 HXI HT,HT HXI,Precision,hxi_ht
-Offline,QUEST,WARRIOR RX3I,Quest,warrior
-Offline,Robinson Drilling Rig 11,HC Relay Logic,Robinson,hci
-Offline,Romania Remote Support,,CanGlobal,gateway
-Offline,Savanna Rig 414,FDS,Savanna,fds
-Offline,Savanna Rig 416,FDS 150 Smart Slide,Savanna,fds
-Online,Savanna Rig 418,FDS,Savanna,fds
-Offline,Savanna Rig 419,FDS,Savanna,fds
-Offline,Savanna Rig 428,FDS,Savanna,fds
-Online,Stampede Rig 17 HMI,HMI Top Drive,Stampede,hmi
-Online,Stampede Rig 4,HXI SS,Stampede,hxi_ss
-Offline,Stampede Rig 5,Stampede Rig 5 Rx3i,Stampede,unknown
-Offline,Stampede Rig 7,HXI Smart Slide,Stampede,hxi_ss
-Online,Stampede Rig 8,Smart Slide HXI Rental,Stampede,hxi_ss
-Offline,Star Valley 102  FDS,,Star Valley,fds
-Offline,Star Valley 104 Cosy,HMI Smart Slide,Star Valley,hmi
-Offline,Star Valley Cosy,,Star Valley,unknown
-Offline,Star Valley Rig 201 HXI,HXI Smart Slide,Star Valley,hxi_ss
-Offline,Steinburger Rig 3 VTech,Warrior 250T,Steinburger,warrior
-Online,Steinburger Rig 4,Warrior,Steinburger,warrior
-Online,Tacrom Futura 5,Tacrom 150 HXI,Tacrom,hxi
-Online,Twilight Rig 1,,Twilight,unknown
-Offline,Twilight Rig 2,Warrior rental,Twilight,warrior
-Offline,Twilight Rig 3,Warrior upgraded Smart Slide,Twilight,warrior
-Offline,Unit Drilling Rig 327,Smart Drive 003 900hp,Unit Drilling,smart_drive
-Offline,Videle EMI,ACS880 EMI 400,Videle,emi
-Offline,Videle Rig 1,HXI (Old name Videle Rig *),Videle,hxi
-Offline,Videle Rig 2,HXI (Old name Videle Rig **),Videle,hxi
-Offline,Videle Rig 4,HXI (Old name Videle Rig ****),Videle,hxi
-Offline,Viking Iraq,,Viking,unknown
-Offline,Vtech new 2025 2523-0726-24,Warrior complete Upgrade,VTech,warrior
-Offline,V-Tech Warrior Prototype,,VTech,warrior
-Offline,Warrior USA Spare,Warrior USA,CanGlobal,warrior
+status,ewon_name,description,customer,equipment_type,firmware
+Connected,Precision Rig 709 HXI HT,HT HXI,Precision,hxi_ht,14.7s2
+Online,Hillcorp_Rig,HXI,Hillcorp,hxi,EW_11_2s2
+Online,Fox Drilling Rig 006,Integrated Wireless System,Fox Drilling,wireless,
+Online,PowerRig-001 EXI,Smart Slide ready EXI,PowerRig,exi,EW_11_3s0
+Online,Twilight Rig 2,Warrior rental,Twilight,warrior,EW_8_2s1
+Online,Stampede Rig 5,Stampede Rig 5 Rx3i,Stampede,rx3i,EW_11_2s2
+Online,Fox Drilling Rig 003,Fox Drilling Rig 003,Fox Drilling,unknown,EW_11_3s0
+Online,PowerRig Rig 7,Smart Slide RsTi TDS11,PowerRig,rostel,13.0s0
+Online,Stampede Rig 17 HMI,HMI Top Drive,Stampede,hmi,14.0s02
+Online,Precision Rig 226,Rig 226 Smart Slide EXI,Precision,exi,13.2s1
+Online,Precision Rig 185,Rostel Top Drive,Precision,rostel,EW_11_2s2
+Online,Stampede Rig 8,Smart Slide HXI Rental,Stampede,hxi_ss,14.4s0
+Online,Precision Rig 116,Rostel Rx3i,Precision,rostel,14.2s0
+Online,Twilight Rig 1,,Twilight,unknown,14.4s1
+Online,Atlas Rig 2,HXI Smart Slide,Atlas,hxi_ss,EW_11_3s0
+Online,Stampede Rig 4,HXI SS,Stampede,hxi_ss,EW_11_3s0
+Online,Precision Rig 706,HXI Standard,Precision,hxi,
+Online,Ensign Rig 420,HXI Smart Slide,Ensign,hxi_ss,13.0s0
+Online,Panther Rig 2,Relay Logic HXI,Panther,hxi_relay,14.5s1
+Online,Fox Drilling Rig 008,Integrated Wireless system,Fox Drilling,wireless,14.5s1
+Online,Stampede Rig 7,HXI Smart Slide,Stampede,hxi_ss,14.6s0
+Online,Precision Rig 707 3pd HT,HXI HT,Precision,hxi_ht,14.2s0
+Online,Excalibur Rig 14,HXI,Excalibur,hxi,13.0s0
+Online,Precision Rig 294,Rostel,Precision,rostel,14.0s02
+Online,Precision Rig 148 Rostel,Rostel,Precision,rostel,13.2s1
+Online,Precision Rig 146,Rostel,Precision,rostel,14.7s2
+Online,Akita Rig 14,HXI relay logic,Akita,hxi_relay,14.7s2
+Online,Savanna Rig 418,FDS,Savanna,fds,14.9s4
+Online,Steinburger Rig 4,Warrior,Steinburger,warrior,14.7s2
+Online,Precision Rig 220,3 SPD HT,Precision,unknown,14.9s3
+Online,Precision Rig 231 new,HXI HT,Precision,hxi_ht,13.2s1
+Online,Precision Rig 395,HXI,Precision,hxi,14.9s4
+Offline,Videle Rig 4,HXI (Old name Videle Rig ****),Videle,hxi,EW_11_3s0
+Offline,Ensign Energy Rig 931,Smart Drive 002 1350hp,Ensign,smart_drive,EW_11_2s2
+Offline,PowerRig 005 EXI SS Rental,Smart Slide Ready EXI,PowerRig,exi,EW_11_3s0
+Offline,Unit Drilling Rig 327,Smart Drive 003 900hp,Unit Drilling,smart_drive,
+Offline,Atlas Drilling Rig 005 HCI,Atlas Drilling Rig 003,Atlas,hci,
+Offline,Fox Drilling Rig 007,Fox Drilling Rig 007,Fox Drilling,unknown,
+Offline,PowerRig002 EXI SS Rental,PowerRig 002 Rx3i,PowerRig,exi,EW_11_3s0
+Offline,Fox Drilling Rig 005,Fox Drilling Rig 005,Fox Drilling,unknown,EW_11_0s0
+Offline,Fox Drilling Rig 004,Portable Wireless System,Fox Drilling,wireless,EW_11_0s0
+Offline,Videle Rig 2,HXI (Old name Videle Rig **),Videle,hxi,EW_11_3s0
+Offline,Fox Drilling Rig 001,Fox Drilling 001,Fox Drilling,unknown,EW_11_0s0
+Offline,PowerRig003,PowerRig003 Rx3i,PowerRig,rx3i,EW_11_0s0
+Offline,PowerRig SPARE,PowerRig Alternate,PowerRig,unknown,EW_11_0s0
+Offline,Dafora Rig 10,Romania,Dafora,unknown,EW_11_2s2
+Offline,CanGlobal shop 2,old PowerRig 009 Rx3i,CanGlobal,rx3i,EW_11_2s2
+Offline,PowerRig 004 EXI SS Rental,Smart Sliide Ready EXI,PowerRig,exi,EW_11_3s0
+Offline,Horizon Rig 34,Horizon Rig 34 Rx3i HMI TD,Horizon,hmi,EW_11_2s2
+Offline,Precision Rig 290,Precision Rig 290 Rx3i,Precision,rx3i,EW_11_2s2
+Offline,Precision Rig 192,Rostel Smart Slide,Precision,rostel,EW_11_3s0
+Offline,Excalibur Rig 12,Excalibur HXI Smart Slide Rental,Excalibur,hxi_ss,13.0s0
+Offline,Precision Rig 225 HXI HT,HXI SS ST 2SPD,Precision,hxi_ht,13.0s0
+Offline,Ensign Rig 963,EXI800 HP,Ensign,exi,EW_11_3s0
+Offline,Precision Rig 403,HXI Smart Slide Rx3i,Precision,hxi_ss,13.2s1
+Offline,Precision Rig 254 Mobile,Rostel Mobile Unit,Precision,rostel,14.9s4
+Offline,Robinson Drilling Rig 11,HC Relay Logic,Robinson Drilling,unknown,13.3s0
+Offline,Excalibur Rig 11,,Excalibur,unknown,14.4s0
+Offline,Savanna Rig 416,FDS 150 Smart Slide,Savanna,fds,14.2s0
+Offline,Fox Rig 6 IR,,Fox Drilling,unknown,EW_11_2s2
+Offline,Steinburger Rig 3 VTech,Warrior 250T,Steinburger,warrior,EW_11_0s0
+Offline,Precision Rig 309 HT,HXI HT,Precision,hxi_ht,EW_11_2s1
+Offline,Atlas Rig 7 HCI Smart Slide,,Atlas,hci,EW_11_0s0
+Offline,Savanna Rig 414,FDS,Savanna,fds,14.4s1
+Offline,Star Valley Rig 201 HXI,HXI Smart Slide,Star Valley,hxi_ss,14.5s1
+Offline,Atlas Rig 3,HXI PLC,Atlas,hxi,14.5s1
+Offline,John Energy Rig 16,ECI Smart Drive 007,John Energy,smart_drive,EW_11_0s0
+Offline,Videle Rig 1,HXI (Old name Videle Rig *),Videle,hxi,EW_11_3s0
+Offline,Precision Rig 703 HXI,HXI Smart Slide,Precision,hxi_ss,14.5s1
+Offline,ENSIGN RIG 438,HXI SMART SLIDE,Ensign,hxi_ss,15.0s2
+Offline,Atlas Rig 15,HXI,Atlas,hxi,14.2s0
+Offline,Precision Rig 708,HXI PLC old Ironhand 108,Precision,hxi,14.5s1
+Offline,Precision Rig 709,Warrior 250T,Precision,warrior,
+Offline,Precision Rig 199,Rostel Smart Slide,Precision,rostel,14.6s0
+Offline,Precision Rig 701,HXI top drive,Precision,hxi,14.6s0
+Offline,Precision Rig 151 new,,Precision,unknown,13.2s1
+Offline,Panther Rig 3,,Panther,unknown,13.2s1
+Offline,Excalibur Rig 10,HXI,Excalibur,hxi,14.7s2
+Offline,Precision Rig 191,Rostel,Precision,rostel,14.7s2
+Offline,Savanna Rig 428,FDS,Savanna,fds,14.7s2
+Offline,Alliance Rig 3,Relay Logic HXI,Alliance,hxi_relay,14.7s2
+Offline,Precision Rig 150,Rostel,Precision,rostel,14.7s2
+Offline,Savanna Rig 419,FDS,Savanna,fds,14.9s3
+Offline,Precision Rig 195,,Precision,unknown,14.7s2
+Offline,Twilight Rig 3,Warrior upgraded Smart Slide,Twilight,warrior,14.8s0
+Offline,Precision Rig 702,,Precision,unknown,14.9s4
+Offline,PowerRig new backup,,PowerRig,unknown,14.9s3

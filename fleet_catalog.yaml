@@ -1,962 +1,613 @@
-# ===================================================================
-# TopDrive AI -- Fleet Catalog (Talk2m eWon Export)
-# ===================================================================
-# Source: Steve's Talk2m account, full fleet export (~130 devices)
-# Each entry classified by equipment_type for physics engine selection.
-#
-# Fields:
-#   ewon_name:       Talk2m device name (unique identifier)
-#   equipment_type:  EquipmentType enum value (drives physics params)
-#   customer:        Drilling company / owner
-#   description:     Equipment description from Talk2m
-#   firmware:        eWon firmware version
-#   status:          Last known status (online/offline/connected)
-#   notes:           Optional notes
-# ===================================================================
-
-devices:
-
-  # --- Shop / Commission Units -------------------------------------
-  - ewon_name: "AAA_SHOP_COMMISSION_UNIT"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "EW_11_2s2"
-    status: offline
-
-  - ewon_name: "AAAAAAAAAAAAShop 2514-1539-24"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "14.9s4"
-    status: offline
-
-  - ewon_name: "AAAAAASHOP 1751-0042-59"
-    equipment_type: hxi
-    customer: CanGlobal
-    description: "HXI"
-    firmware: "EW_11_2s2"
-    status: offline
-
-  - ewon_name: "AAAAAShop  2523-0667-24"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "14.9s4"
-    status: offline
-
-  - ewon_name: "AAAASHOP_12 1939-0027-24"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "13.3s0"
-    status: offline
-
-  - ewon_name: "AAAASHOP_13 1936-0016-24"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "13.3s0"
-    status: offline
-
-  - ewon_name: "AAAASHOP_14 1802-0014-56"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "EW_11_3s0"
-    status: offline
-
-  - ewon_name: "AAAA shop 2042-0185-24"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "14.4s0"
-    status: offline
-
-  - ewon_name: "AAAA Shop 2131-0147-24 - ElecBay"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "14.2s0"
-    status: online
-
-  - ewon_name: "AAAA Shop 2317-1373-24 - HXI SS Kit"
-    equipment_type: hxi_smart_slide
-    customer: CanGlobal
-    description: "HXI SS Kit"
-    firmware: "14.6s0"
-    status: offline
-
-  - ewon_name: "AAAA shop 2407-0551-24"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "14.7s2"
-    status: offline
-
-  - ewon_name: "AAAA Shop 2407-1471-24"
-    equipment_type: hxi
-    customer: CanGlobal
-    description: "HXI"
-    firmware: "14.7s2"
-    status: offline
-
-  - ewon_name: "AAAASHOP 2420-1488-24"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "14.8s0"
-    status: offline
-
-  - ewon_name: "AAAA SHOP COZY UNIT MY OFFICE"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "14.5s1"
-    status: online
-
-  - ewon_name: "AAAA SHOP PORTABLE UNIT 2242-1162-22"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "14.5s1"
-    status: online
-
-  - ewon_name: "AAAA TEST UNIT"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "14.6s0"
-    status: offline
-
-  - ewon_name: "AAAShop12 2407-1689-24"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "14.7s2"
-    status: offline
-
-  - ewon_name: "AAASHop 2407-0555-24"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: "14.7s2"
-    status: offline
-
-  - ewon_name: "AAA SHOP COZY 3"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: ""
-    status: offline
-
-  # --- Akita ------------------------------------------------------
-  - ewon_name: "Akita R523 EXI 800HP"
-    equipment_type: exi
-    customer: Akita
-    description: "EXI 800HP"
-    firmware: "EW_11_2s2"
-    status: offline
-
-  - ewon_name: "Akita Rig 14"
-    equipment_type: hxi
-    customer: Akita
-    description: "HXI relay logic"
-    firmware: "14.7s2"
-    status: online
-
-  # --- Alliance ---------------------------------------------------
-  - ewon_name: "Alliance Rig 3"
-    equipment_type: hxi
-    customer: Alliance
-    description: "Relay Logic HXI"
-    firmware: "14.7s2"
-    status: offline
-
-  # --- Atlas ------------------------------------------------------
-  - ewon_name: "Atlas Drilling Rig 005 HCI"
-    equipment_type: unknown
-    customer: Atlas
-    description: "Atlas Drilling Rig 003"
-    firmware: ""
-    status: offline
-
-  - ewon_name: "Atlas Rig 15"
-    equipment_type: hxi
-    customer: Atlas
-    description: "HXI"
-    firmware: "14.2s0"
-    status: offline
-
-  - ewon_name: "Atlas Rig 2"
-    equipment_type: hxi_smart_slide
-    customer: Atlas
-    description: "HXI Smart Slide"
-    firmware: "EW_11_3s0"
-    status: online
-
-  - ewon_name: "Atlas Rig 3"
-    equipment_type: hxi
-    customer: Atlas
-    description: "HXI PLC"
-    firmware: "14.5s1"
-    status: offline
-
-  - ewon_name: "Atlas Rig 7 HCI Smart Slide"
-    equipment_type: hxi_smart_slide
-    customer: Atlas
-    description: "HCI Smart Slide"
-    firmware: "EW_11_0s0"
-    status: offline
-
-  - ewon_name: "Atlas Spare"
-    equipment_type: unknown
-    customer: Atlas
-    description: ""
-    firmware: "EW_11_3s0"
-    status: offline
-
-  - ewon_name: "Back to shop for testing"
-    equipment_type: hxi_smart_slide
-    customer: CanGlobal
-    description: "HXI Smart Slide"
-    firmware: ""
-    status: offline
-
-  # --- CanGlobal --------------------------------------------------
-  - ewon_name: "Canadian Global Shop ECI"
-    equipment_type: eci
-    customer: CanGlobal
-    description: "ECI"
-    firmware: ""
-    status: offline
-
-  - ewon_name: "CanGlobal Shop"
-    equipment_type: smart_drive
-    customer: CanGlobal
-    description: "Smart Drive 005 900hp"
-    firmware: "EW_11_2s2"
-    status: offline
-
-  - ewon_name: "CanGlobal shop 2"
-    equipment_type: rostel
-    customer: CanGlobal
-    description: "old PowerRig 009 Rx3i"
-    firmware: "EW_11_2s2"
-    status: offline
-
-  - ewon_name: "CanGlobal USA Technician eWON"
-    equipment_type: unknown
-    customer: CanGlobal
-    description: "CanGlobal Technician eWON"
-    firmware: "13.2s1"
-    status: offline
-    notes: "Technician field unit -- not a top drive"
-
-  - ewon_name: "CG Shop"
-    equipment_type: shop_unit
-    customer: CanGlobal
-    description: ""
-    firmware: ""
-    status: offline
-
-  # --- Dafora -----------------------------------------------------
-  - ewon_name: "Dafora Rig 10"
-    equipment_type: unknown
-    customer: Dafora
-    description: "Romania"
-    firmware: "EW_11_2s2"
-    status: offline
-
-  # --- Ensign -----------------------------------------------------
-  - ewon_name: "Ensign Energy Rig 931"
-    equipment_type: smart_drive
-    customer: Ensign
-    description: "Smart Drive 002 1350hp"
-    firmware: "EW_11_2s2"
-    status: offline
-
-  - ewon_name: "Ensign Rig 420"
-    equipment_type: hxi_smart_slide
-    customer: Ensign
-    description: "HXI Smart Slide"
-    firmware: "13.0s0"
-    status: online
-
-  - ewon_name: "ENSIGN RIG 438"
-    equipment_type: hxi_smart_slide
-    customer: Ensign
-    description: "HXI SMART SLIDE"
-    firmware: "15.0s2"
-    status: online
-
-  - ewon_name: "Ensign Rig 963"
-    equipment_type: exi
-    customer: Ensign
-    description: "EXI800 HP"
-    firmware: "EW_11_3s0"
-    status: offline
-
-  - ewon_name: "ENSIGN T401 HXI"
-    equipment_type: hxi_smart_slide
-    customer: Ensign
-    description: "HXI SS"
-    firmware: "EW_11_3s0"
-    status: offline
-
-  - ewon_name: "ENSIGN T418 HXI HT"
-    equipment_type: hxi_ht
-    customer: Ensign
-    description: "HXI 3SPD HT SMART SLIDE"
-    firmware: "13.0s0"
-    status: offline
-
-  - ewon_name: "Ensign T419 HXI 3Spd HT"
-    equipment_type: hxi_ht
-    customer: Ensign
-    description: "Trinidad T418 HXI 3Spd HT"
-    firmware: "EW_11_3s0"
-    status: online
-
-  - ewon_name: "Ensign T432"
-    equipment_type: hxi_smart_slide
-    customer: Ensign
-    description: "HXI Smart Slide"
-    firmware: "14.2s0"
-    status: online
-
-  - ewon_name: "Ensign T434 HXI HT"
-    equipment_type: hxi_ht
-    customer: Ensign
-    description: "Ensign T434 Rx3i"
-    firmware: "EW_11_2s2"
-    status: offline
-
-  # --- Excalibur --------------------------------------------------
-  - ewon_name: "Excalibur Rig 10"
-    equipment_type: hxi
-    customer: Excalibur
-    description: "HXI"
-    firmware: "14.7s2"
-    status: offline
-
-  - ewon_name: "Excalibur Rig 11"
-    equipment_type: unknown
-    customer: Excalibur
-    description: ""
-    firmware: "14.4s0"
-    status: offline
-
-  - ewon_name: "Excalibur Rig 12"
-    equipment_type: hxi_smart_slide
-    customer: Excalibur
-    description: "Excalibur HXI Smart Slide Rental"
-    firmware: "13.0s0"
-    status: offline
-
-  - ewon_name: "Excalibur Rig 14"
-    equipment_type: hxi
-    customer: Excalibur
-    description: "HXI"
-    firmware: "13.0s0"
-    status: offline
-
-  # --- Field / Support --------------------------------------------
-  - ewon_name: "Field Truck Remote Access"
-    equipment_type: unknown
-    customer: CanGlobal
-    description: ""
-    firmware: "EW_11_0s0"
-    status: online
-    notes: "Field truck -- not a top drive"
-
-  # --- Fox Drilling -----------------------------------------------
-  - ewon_name: "Fox Drilling Rig 001"
-    equipment_type: unknown
-    customer: Fox
-    description: "Fox Drilling 001"
-    firmware: "EW_11_0s0"
-    status: offline
-
-  - ewon_name: "Fox Drilling Rig 003"
-    equipment_type: unknown
-    customer: Fox
-    description: "Fox Drilling Rig 003"
-    firmware: "EW_11_3s0"
-    status: online
-
-  - ewon_name: "Fox Drilling Rig 004"
-    equipment_type: unknown
-    customer: Fox
-    description: "Portable Wireless System"
-    firmware: "EW_11_0s0"
-    status: online
-
-  - ewon_name: "Fox Drilling Rig 005"
-    equipment_type: unknown
-    customer: Fox
-    description: "Fox Drilling Rig 005"
-    firmware: "EW_11_0s0"
-    status: offline
-
-  - ewon_name: "Fox Drilling Rig 006"
-    equipment_type: unknown
-    customer: Fox
-    description: "Integrated Wireless System"
-    firmware: ""
-    status: online
-
-  - ewon_name: "Fox Drilling Rig 007"
-    equipment_type: unknown
-    customer: Fox
-    description: "Fox Drilling Rig 007"
-    firmware: ""
-    status: offline
-
-  - ewon_name: "Fox Drilling Rig 008"
-    equipment_type: unknown
-    customer: Fox
-    description: "Integrated Wireless system"
-    firmware: "14.5s1"
-    status: online
-
-  - ewon_name: "Fox Rig 6 IR"
-    equipment_type: unknown
-    customer: Fox
-    description: ""
-    firmware: "EW_11_2s2"
-    status: offline
-
-  # --- Horizon ----------------------------------------------------
-  - ewon_name: "Horizon Rig 34"
-    equipment_type: rostel
-    customer: Horizon
-    description: "Horizon Rig 34 Rx3i HMI TD"
-    firmware: "EW_11_2s2"
-    status: offline
-
-  # --- John Energy ------------------------------------------------
-  - ewon_name: "John Energy Rig 16"
-    equipment_type: eci
-    customer: John Energy
-    description: "ECI Smart Drive 007"
-    firmware: "EW_11_0s0"
-    status: offline
-
-  # --- OMV --------------------------------------------------------
-  - ewon_name: "OMV"
-    equipment_type: emi
-    customer: OMV
-    description: "EMI400 CE ATEX"
-    firmware: "13.3s0"
-    status: offline
-
-  # --- Optimum ----------------------------------------------------
-  - ewon_name: "OPTIMUM HXI IRAQ"
-    equipment_type: hxi
-    customer: Optimum
-    description: "Optimum"
-    firmware: "EW_11_3s0"
-    status: offline
-
-  # --- Panther ----------------------------------------------------
-  - ewon_name: "Panther Rig 2"
-    equipment_type: hxi
-    customer: Panther
-    description: "Relay Logic HXI"
-    firmware: "14.5s1"
-    status: online
-
-  - ewon_name: "Panther Rig 3"
-    equipment_type: unknown
-    customer: Panther
-    description: ""
-    firmware: "13.2s1"
-    status: offline
-
-  # --- PowerRig ---------------------------------------------------
-  - ewon_name: "PowerRig-001 EXI"
-    equipment_type: exi
-    customer: PowerRig
-    description: "Smart Slide ready EXI"
-    firmware: "EW_11_3s0"
-    status: online
-
-  - ewon_name: "PowerRig002 EXI SS Rental"
-    equipment_type: exi
-    customer: PowerRig
-    description: "PowerRig 002 Rx3i"
-    firmware: "EW_11_3s0"
-    status: offline
-
-  - ewon_name: "PowerRig003"
-    equipment_type: unknown
-    customer: PowerRig
-    description: "PowerRig003 Rx3i"
-    firmware: "EW_11_0s0"
-    status: offline
-
-  - ewon_name: "PowerRig 004 EXI SS Rental"
-    equipment_type: exi
-    customer: PowerRig
-    description: "Smart Slide Ready EXI"
-    firmware: "EW_11_3s0"
-    status: offline
-
-  - ewon_name: "PowerRig 005 EXI SS Rental"
-    equipment_type: exi
-    customer: PowerRig
-    description: "Smart Slide Ready EXI"
-    firmware: "EW_11_3s0"
-    status: online
-
-  - ewon_name: "PowerRig new backup"
-    equipment_type: unknown
-    customer: PowerRig
-    description: ""
-    firmware: "14.9s3"
-    status: offline
-
-  - ewon_name: "PowerRig Rig 7"
-    equipment_type: rostel
-    customer: PowerRig
-    description: "Smart Slide RsTi TDS11"
-    firmware: "13.0s0"
-    status: online
-
-  - ewon_name: "PowerRig SPARE"
-    equipment_type: unknown
-    customer: PowerRig
-    description: "PowerRig Alternate"
-    firmware: "EW_11_0s0"
-    status: offline
-    notes: "Alternate/spare unit"
-
-  # --- Precision --------------------------------------------------
-  - ewon_name: "Precision Rig 116"
-    equipment_type: rostel
-    customer: Precision
-    description: "Rostel Rx3i"
-    firmware: "14.2s0"
-    status: online
-
-  - ewon_name: "Precision Rig 146"
-    equipment_type: rostel
-    customer: Precision
-    description: "Rostel"
-    firmware: "14.7s2"
-    status: online
-
-  - ewon_name: "Precision Rig 148 Rostel"
-    equipment_type: rostel
-    customer: Precision
-    description: "Rostel"
-    firmware: "13.2s1"
-    status: online
-
-  - ewon_name: "Precision Rig 150"
-    equipment_type: rostel
-    customer: Precision
-    description: "Rostel"
-    firmware: "14.7s2"
-    status: offline
-
-  - ewon_name: "Precision Rig 151 new"
-    equipment_type: unknown
-    customer: Precision
-    description: ""
-    firmware: "13.2s1"
-    status: offline
-
-  - ewon_name: "Precision Rig 185"
-    equipment_type: rostel
-    customer: Precision
-    description: "Rostel Top Drive"
-    firmware: "EW_11_2s2"
-    status: online
-
-  - ewon_name: "Precision Rig 191"
-    equipment_type: rostel
-    customer: Precision
-    description: "Rostel"
-    firmware: "14.7s2"
-    status: offline
-
-  - ewon_name: "Precision Rig 192"
-    equipment_type: rostel
-    customer: Precision
-    description: "Rostel Smart Slide"
-    firmware: "EW_11_3s0"
-    status: offline
-
-  - ewon_name: "Precision Rig 195"
-    equipment_type: unknown
-    customer: Precision
-    description: ""
-    firmware: "14.7s2"
-    status: online
-
-  - ewon_name: "Precision Rig 199"
-    equipment_type: rostel
-    customer: Precision
-    description: "Rostel Smart Slide"
-    firmware: "14.6s0"
-    status: offline
-
-  - ewon_name: "Precision Rig 220"
-    equipment_type: hxi_ht
-    customer: Precision
-    description: "3 SPD HT"
-    firmware: "14.9s3"
-    status: online
-
-  - ewon_name: "Precision Rig 225 HXI HT"
-    equipment_type: hxi_ht
-    customer: Precision
-    description: "HXI SS ST 2SPD"
-    firmware: "13.0s0"
-    status: offline
-
-  - ewon_name: "Precision Rig 226"
-    equipment_type: exi
-    customer: Precision
-    description: "Rig 226 Smart Slide EXI"
-    firmware: "13.2s1"
-    status: online
-
-  - ewon_name: "Precision Rig 231 new"
-    equipment_type: hxi_ht
-    customer: Precision
-    description: "HXI HT"
-    firmware: "13.2s1"
-    status: online
-
-  - ewon_name: "Precision Rig 254 Mobile"
-    equipment_type: rostel
-    customer: Precision
-    description: "Rostel Mobile Unit"
-    firmware: "14.9s4"
-    status: online
-
-  - ewon_name: "Precision Rig 290"
-    equipment_type: rostel
-    customer: Precision
-    description: "Precision Rig 290 Rx3i"
-    firmware: "EW_11_2s2"
-    status: offline
-
-  - ewon_name: "Precision Rig 294"
-    equipment_type: rostel
-    customer: Precision
-    description: "Rostel"
-    firmware: "14.0s02"
-    status: online
-
-  - ewon_name: "Precision Rig 309 HT"
-    equipment_type: hxi_ht
-    customer: Precision
-    description: "HXI HT"
-    firmware: "EW_11_2s1"
-    status: offline
-
-  - ewon_name: "Precision Rig 395"
-    equipment_type: hxi
-    customer: Precision
-    description: "HXI"
-    firmware: "14.9s4"
-    status: online
-
-  - ewon_name: "Precision Rig 403"
-    equipment_type: hxi_smart_slide
-    customer: Precision
-    description: "HXI Smart Slide Rx3i"
-    firmware: "13.2s1"
-    status: offline
-
-  - ewon_name: "Precision Rig 701"
-    equipment_type: hxi
-    customer: Precision
-    description: "HXI top drive"
-    firmware: "14.6s0"
-    status: offline
-
-  - ewon_name: "Precision Rig 702"
-    equipment_type: unknown
-    customer: Precision
-    description: ""
-    firmware: "14.9s4"
-    status: offline
-
-  - ewon_name: "Precision Rig 703 HXI"
-    equipment_type: hxi_smart_slide
-    customer: Precision
-    description: "HXI Smart Slide"
-    firmware: "14.5s1"
-    status: offline
-
-  - ewon_name: "Precision Rig 706"
-    equipment_type: hxi
-    customer: Precision
-    description: "HXI Standard"
-    firmware: ""
-    status: offline
-
-  - ewon_name: "Precision Rig 707 3pd HT"
-    equipment_type: hxi_ht
-    customer: Precision
-    description: "HXI HT"
-    firmware: "14.2s0"
-    status: online
-
-  - ewon_name: "Precision Rig 708"
-    equipment_type: hxi
-    customer: Precision
-    description: "HXI PLC old Ironhand 108"
-    firmware: "14.5s1"
-    status: offline
-
-  - ewon_name: "Precision Rig 709"
-    equipment_type: warrior
-    customer: Precision
-    description: "Warrior 250T"
-    firmware: ""
-    status: offline
-
-  - ewon_name: "Precision Rig 709 HXI HT"
-    equipment_type: hxi_ht
-    customer: Precision
-    description: "HT HXI"
-    firmware: "14.7s2"
-    status: connected
-    notes: "Active development rig -- confirmed R141/R169/R131/R171 register scan"
-
-  # --- Quest ------------------------------------------------------
-  - ewon_name: "QUEST"
-    equipment_type: warrior
-    customer: Quest
-    description: "WARRIOR RX3I"
-    firmware: "14.7s2"
-    status: offline
-
-  # --- Robinson ---------------------------------------------------
-  - ewon_name: "Robinson Drilling Rig 11"
-    equipment_type: hxi
-    customer: Robinson
-    description: "HC Relay Logic"
-    firmware: "13.3s0"
-    status: offline
-
-  # --- Romania ----------------------------------------------------
-  - ewon_name: "Romania Remote Support"
-    equipment_type: unknown
-    customer: CanGlobal
-    description: ""
-    firmware: "EW_11_2s2"
-    status: offline
-    notes: "Remote support -- not a top drive"
-
-  # --- Savanna ----------------------------------------------------
-  - ewon_name: "Savanna Rig 414"
-    equipment_type: fds
-    customer: Savanna
-    description: "FDS"
-    firmware: "14.4s1"
-    status: offline
-
-  - ewon_name: "Savanna Rig 416"
-    equipment_type: fds
-    customer: Savanna
-    description: "FDS 150 Smart Slide"
-    firmware: "14.2s0"
-    status: offline
-
-  - ewon_name: "Savanna Rig 418"
-    equipment_type: fds
-    customer: Savanna
-    description: "FDS"
-    firmware: "14.9s4"
-    status: online
-
-  - ewon_name: "Savanna Rig 419"
-    equipment_type: fds
-    customer: Savanna
-    description: "FDS"
-    firmware: "14.9s3"
-    status: online
-
-  - ewon_name: "Savanna Rig 428"
-    equipment_type: fds
-    customer: Savanna
-    description: "FDS"
-    firmware: "14.7s2"
-    status: offline
-
-  # --- Stampede ---------------------------------------------------
-  - ewon_name: "Stampede Rig 17 HMI"
-    equipment_type: unknown
-    customer: Stampede
-    description: "HMI Top Drive"
-    firmware: "14.0s02"
-    status: online
-
-  - ewon_name: "Stampede Rig 4"
-    equipment_type: hxi_smart_slide
-    customer: Stampede
-    description: "HXI SS"
-    firmware: "EW_11_3s0"
-    status: online
-
-  - ewon_name: "Stampede Rig 5"
-    equipment_type: rostel
-    customer: Stampede
-    description: "Stampede Rig 5 Rx3i"
-    firmware: "EW_11_2s2"
-    status: online
-
-  - ewon_name: "Stampede Rig 7"
-    equipment_type: hxi_smart_slide
-    customer: Stampede
-    description: "HXI Smart Slide"
-    firmware: "14.6s0"
-    status: online
-
-  - ewon_name: "Stampede Rig 8"
-    equipment_type: hxi_smart_slide
-    customer: Stampede
-    description: "Smart Slide HXI Rental"
-    firmware: "14.4s0"
-    status: offline
-
-  # --- Star Valley ------------------------------------------------
-  - ewon_name: "Star Valley 102  FDS"
-    equipment_type: fds
-    customer: Star Valley
-    description: ""
-    firmware: "EW_11_2s2"
-    status: offline
-
-  - ewon_name: "Star Valley 104 Cosy"
-    equipment_type: hxi_smart_slide
-    customer: Star Valley
-    description: "HMI Smart Slide"
-    firmware: ""
-    status: offline
-
-  - ewon_name: "Star Valley Cosy"
-    equipment_type: unknown
-    customer: Star Valley
-    description: ""
-    firmware: "11.2s2"
-    status: offline
-
-  - ewon_name: "Star Valley Rig 201 HXI"
-    equipment_type: hxi_smart_slide
-    customer: Star Valley
-    description: "HXI Smart Slide"
-    firmware: "14.5s1"
-    status: offline
-
-  # --- Steinburger ------------------------------------------------
-  - ewon_name: "Steinburger Rig 3 VTech"
-    equipment_type: warrior
-    customer: Steinburger
-    description: "Warrior 250T"
-    firmware: "EW_11_0s0"
-    status: offline
-
-  - ewon_name: "Steinburger Rig 4"
-    equipment_type: warrior
-    customer: Steinburger
-    description: "Warrior"
-    firmware: "14.7s2"
-    status: online
-
-  # --- Tacrom -----------------------------------------------------
-  - ewon_name: "Tacrom Futura 5"
-    equipment_type: hxi
-    customer: Tacrom
-    description: "Tacrom 150 HXI"
-    firmware: "EW_11_3s0"
-    status: online
-
-  # --- Twilight ---------------------------------------------------
-  - ewon_name: "Twilight Rig 1"
-    equipment_type: unknown
-    customer: Twilight
-    description: ""
-    firmware: "14.4s1"
-    status: online
-
-  - ewon_name: "Twilight Rig 2"
-    equipment_type: warrior
-    customer: Twilight
-    description: "Warrior rental"
-    firmware: "EW_8_2s1"
-    status: offline
-
-  - ewon_name: "Twilight Rig 3"
-    equipment_type: warrior
-    customer: Twilight
-    description: "Warrior upgraded Smart Slide"
-    firmware: "14.8s0"
-    status: offline
-
-  # --- Unit Drilling ----------------------------------------------
-  - ewon_name: "Unit Drilling Rig 327"
-    equipment_type: smart_drive
-    customer: Unit Drilling
-    description: "Smart Drive 003 900hp"
-    firmware: ""
-    status: offline
-
-  # --- Videle / Romania -------------------------------------------
-  - ewon_name: "Videle EMI"
-    equipment_type: emi
-    customer: Videle
-    description: "ACS880 EMI 400"
-    firmware: "14.8s0"
-    status: offline
-
-  - ewon_name: "Videle Rig 1"
-    equipment_type: hxi
-    customer: Videle
-    description: "HXI"
-    firmware: "EW_11_3s0"
-    status: offline
-
-  - ewon_name: "Videle Rig 2"
-    equipment_type: hxi
-    customer: Videle
-    description: "HXI"
-    firmware: "EW_11_3s0"
-    status: offline
-
-  - ewon_name: "Videle Rig 4"
-    equipment_type: hxi
-    customer: Videle
-    description: "HXI"
-    firmware: "EW_11_3s0"
-    status: offline
-
-  # --- Viking -----------------------------------------------------
-  - ewon_name: "Viking Iraq"
-    equipment_type: unknown
-    customer: Viking
-    description: ""
-    firmware: "EW_11_0s0"
-    status: offline
-
-  # --- V-Tech -----------------------------------------------------
-  - ewon_name: "Vtech new 2025 2523-0726-24"
-    equipment_type: warrior
-    customer: V-Tech
-    description: "Warrior complete Upgrade"
-    firmware: "14.9s4"
-    status: offline
-
-  - ewon_name: "V-Tech Warrior Prototype"
-    equipment_type: warrior
-    customer: V-Tech
-    description: ""
-    firmware: "14.5s1"
-    status: offline
+# Fleet Catalog — auto-generated from Talk2m export
+# 87 eWon devices
+# Generated: 2026-02-26
+
+devices:
+  - ewon_name: "Precision Rig 709 HXI HT"
+    equipment_type: "hxi_ht"
+    customer: "Precision"
+    description: "HT HXI"
+    firmware: "14.7s2"
+    status: "connected"
+
+  - ewon_name: "Hillcorp_Rig"
+    equipment_type: "hxi"
+    customer: "Hillcorp"
+    description: "HXI"
+    firmware: "EW_11_2s2"
+    status: "online"
+
+  - ewon_name: "Fox Drilling Rig 006"
+    equipment_type: "wireless"
+    customer: "Fox Drilling"
+    description: "Integrated Wireless System"
+    firmware: ""
+    status: "online"
+
+  - ewon_name: "PowerRig-001 EXI"
+    equipment_type: "exi"
+    customer: "PowerRig"
+    description: "Smart Slide ready EXI"
+    firmware: "EW_11_3s0"
+    status: "online"
+
+  - ewon_name: "Twilight Rig 2"
+    equipment_type: "warrior"
+    customer: "Twilight"
+    description: "Warrior rental"
+    firmware: "EW_8_2s1"
+    status: "online"
+
+  - ewon_name: "Stampede Rig 5"
+    equipment_type: "rx3i"
+    customer: "Stampede"
+    description: "Stampede Rig 5 Rx3i"
+    firmware: "EW_11_2s2"
+    status: "online"
+
+  - ewon_name: "Fox Drilling Rig 003"
+    equipment_type: "unknown"
+    customer: "Fox Drilling"
+    description: "Fox Drilling Rig 003"
+    firmware: "EW_11_3s0"
+    status: "online"
+
+  - ewon_name: "PowerRig Rig 7"
+    equipment_type: "rostel"
+    customer: "PowerRig"
+    description: "Smart Slide RsTi TDS11"
+    firmware: "13.0s0"
+    status: "online"
+
+  - ewon_name: "Stampede Rig 17 HMI"
+    equipment_type: "hmi"
+    customer: "Stampede"
+    description: "HMI Top Drive"
+    firmware: "14.0s02"
+    status: "online"
+
+  - ewon_name: "Precision Rig 226"
+    equipment_type: "exi"
+    customer: "Precision"
+    description: "Rig 226 Smart Slide EXI"
+    firmware: "13.2s1"
+    status: "online"
+
+  - ewon_name: "Precision Rig 185"
+    equipment_type: "rostel"
+    customer: "Precision"
+    description: "Rostel Top Drive"
+    firmware: "EW_11_2s2"
+    status: "online"
+
+  - ewon_name: "Stampede Rig 8"
+    equipment_type: "hxi_ss"
+    customer: "Stampede"
+    description: "Smart Slide HXI Rental"
+    firmware: "14.4s0"
+    status: "online"
+
+  - ewon_name: "Precision Rig 116"
+    equipment_type: "rostel"
+    customer: "Precision"
+    description: "Rostel Rx3i"
+    firmware: "14.2s0"
+    status: "online"
+
+  - ewon_name: "Twilight Rig 1"
+    equipment_type: "unknown"
+    customer: "Twilight"
+    description: ""
+    firmware: "14.4s1"
+    status: "online"
+
+  - ewon_name: "Atlas Rig 2"
+    equipment_type: "hxi_ss"
+    customer: "Atlas"
+    description: "HXI Smart Slide"
+    firmware: "EW_11_3s0"
+    status: "online"
+
+  - ewon_name: "Stampede Rig 4"
+    equipment_type: "hxi_ss"
+    customer: "Stampede"
+    description: "HXI SS"
+    firmware: "EW_11_3s0"
+    status: "online"
+
+  - ewon_name: "Precision Rig 706"
+    equipment_type: "hxi"
+    customer: "Precision"
+    description: "HXI Standard"
+    firmware: ""
+    status: "online"
+
+  - ewon_name: "Ensign Rig 420"
+    equipment_type: "hxi_ss"
+    customer: "Ensign"
+    description: "HXI Smart Slide"
+    firmware: "13.0s0"
+    status: "online"
+
+  - ewon_name: "Panther Rig 2"
+    equipment_type: "hxi_relay"
+    customer: "Panther"
+    description: "Relay Logic HXI"
+    firmware: "14.5s1"
+    status: "online"
+
+  - ewon_name: "Fox Drilling Rig 008"
+    equipment_type: "wireless"
+    customer: "Fox Drilling"
+    description: "Integrated Wireless system"
+    firmware: "14.5s1"
+    status: "online"
+
+  - ewon_name: "Stampede Rig 7"
+    equipment_type: "hxi_ss"
+    customer: "Stampede"
+    description: "HXI Smart Slide"
+    firmware: "14.6s0"
+    status: "online"
+
+  - ewon_name: "Precision Rig 707 3pd HT"
+    equipment_type: "hxi_ht"
+    customer: "Precision"
+    description: "HXI HT"
+    firmware: "14.2s0"
+    status: "online"
+
+  - ewon_name: "Excalibur Rig 14"
+    equipment_type: "hxi"
+    customer: "Excalibur"
+    description: "HXI"
+    firmware: "13.0s0"
+    status: "online"
+
+  - ewon_name: "Precision Rig 294"
+    equipment_type: "rostel"
+    customer: "Precision"
+    description: "Rostel"
+    firmware: "14.0s02"
+    status: "online"
+
+  - ewon_name: "Precision Rig 148 Rostel"
+    equipment_type: "rostel"
+    customer: "Precision"
+    description: "Rostel"
+    firmware: "13.2s1"
+    status: "online"
+
+  - ewon_name: "Precision Rig 146"
+    equipment_type: "rostel"
+    customer: "Precision"
+    description: "Rostel"
+    firmware: "14.7s2"
+    status: "online"
+
+  - ewon_name: "Akita Rig 14"
+    equipment_type: "hxi_relay"
+    customer: "Akita"
+    description: "HXI relay logic"
+    firmware: "14.7s2"
+    status: "online"
+
+  - ewon_name: "Savanna Rig 418"
+    equipment_type: "fds"
+    customer: "Savanna"
+    description: "FDS"
+    firmware: "14.9s4"
+    status: "online"
+
+  - ewon_name: "Steinburger Rig 4"
+    equipment_type: "warrior"
+    customer: "Steinburger"
+    description: "Warrior"
+    firmware: "14.7s2"
+    status: "online"
+
+  - ewon_name: "Precision Rig 220"
+    equipment_type: "unknown"
+    customer: "Precision"
+    description: "3 SPD HT"
+    firmware: "14.9s3"
+    status: "online"
+
+  - ewon_name: "Precision Rig 231 new"
+    equipment_type: "hxi_ht"
+    customer: "Precision"
+    description: "HXI HT"
+    firmware: "13.2s1"
+    status: "online"
+
+  - ewon_name: "Precision Rig 395"
+    equipment_type: "hxi"
+    customer: "Precision"
+    description: "HXI"
+    firmware: "14.9s4"
+    status: "online"
+
+  - ewon_name: "Videle Rig 4"
+    equipment_type: "hxi"
+    customer: "Videle"
+    description: "HXI (Old name Videle Rig ****)"
+    firmware: "EW_11_3s0"
+    status: "offline"
+
+  - ewon_name: "Ensign Energy Rig 931"
+    equipment_type: "smart_drive"
+    customer: "Ensign"
+    description: "Smart Drive 002 1350hp"
+    firmware: "EW_11_2s2"
+    status: "offline"
+
+  - ewon_name: "PowerRig 005 EXI SS Rental"
+    equipment_type: "exi"
+    customer: "PowerRig"
+    description: "Smart Slide Ready EXI"
+    firmware: "EW_11_3s0"
+    status: "offline"
+
+  - ewon_name: "Unit Drilling Rig 327"
+    equipment_type: "smart_drive"
+    customer: "Unit Drilling"
+    description: "Smart Drive 003 900hp"
+    firmware: ""
+    status: "offline"
+
+  - ewon_name: "Atlas Drilling Rig 005 HCI"
+    equipment_type: "hci"
+    customer: "Atlas"
+    description: "Atlas Drilling Rig 003"
+    firmware: ""
+    status: "offline"
+
+  - ewon_name: "Fox Drilling Rig 007"
+    equipment_type: "unknown"
+    customer: "Fox Drilling"
+    description: "Fox Drilling Rig 007"
+    firmware: ""
+    status: "offline"
+
+  - ewon_name: "PowerRig002 EXI SS Rental"
+    equipment_type: "exi"
+    customer: "PowerRig"
+    description: "PowerRig 002 Rx3i"
+    firmware: "EW_11_3s0"
+    status: "offline"
+
+  - ewon_name: "Fox Drilling Rig 005"
+    equipment_type: "unknown"
+    customer: "Fox Drilling"
+    description: "Fox Drilling Rig 005"
+    firmware: "EW_11_0s0"
+    status: "offline"
+
+  - ewon_name: "Fox Drilling Rig 004"
+    equipment_type: "wireless"
+    customer: "Fox Drilling"
+    description: "Portable Wireless System"
+    firmware: "EW_11_0s0"
+    status: "offline"
+
+  - ewon_name: "Videle Rig 2"
+    equipment_type: "hxi"
+    customer: "Videle"
+    description: "HXI (Old name Videle Rig **)"
+    firmware: "EW_11_3s0"
+    status: "offline"
+
+  - ewon_name: "Fox Drilling Rig 001"
+    equipment_type: "unknown"
+    customer: "Fox Drilling"
+    description: "Fox Drilling 001"
+    firmware: "EW_11_0s0"
+    status: "offline"
+
+  - ewon_name: "PowerRig003"
+    equipment_type: "rx3i"
+    customer: "PowerRig"
+    description: "PowerRig003 Rx3i"
+    firmware: "EW_11_0s0"
+    status: "offline"
+
+  - ewon_name: "PowerRig SPARE"
+    equipment_type: "unknown"
+    customer: "PowerRig"
+    description: "PowerRig Alternate"
+    firmware: "EW_11_0s0"
+    status: "offline"
+
+  - ewon_name: "Dafora Rig 10"
+    equipment_type: "unknown"
+    customer: "Dafora"
+    description: "Romania"
+    firmware: "EW_11_2s2"
+    status: "offline"
+
+  - ewon_name: "CanGlobal shop 2"
+    equipment_type: "rx3i"
+    customer: "CanGlobal"
+    description: "old PowerRig 009 Rx3i"
+    firmware: "EW_11_2s2"
+    status: "offline"
+
+  - ewon_name: "PowerRig 004 EXI SS Rental"
+    equipment_type: "exi"
+    customer: "PowerRig"
+    description: "Smart Sliide Ready EXI"
+    firmware: "EW_11_3s0"
+    status: "offline"
+
+  - ewon_name: "Horizon Rig 34"
+    equipment_type: "hmi"
+    customer: "Horizon"
+    description: "Horizon Rig 34 Rx3i HMI TD"
+    firmware: "EW_11_2s2"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 290"
+    equipment_type: "rx3i"
+    customer: "Precision"
+    description: "Precision Rig 290 Rx3i"
+    firmware: "EW_11_2s2"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 192"
+    equipment_type: "rostel"
+    customer: "Precision"
+    description: "Rostel Smart Slide"
+    firmware: "EW_11_3s0"
+    status: "offline"
+
+  - ewon_name: "Excalibur Rig 12"
+    equipment_type: "hxi_ss"
+    customer: "Excalibur"
+    description: "Excalibur HXI Smart Slide Rental"
+    firmware: "13.0s0"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 225 HXI HT"
+    equipment_type: "hxi_ht"
+    customer: "Precision"
+    description: "HXI SS ST 2SPD"
+    firmware: "13.0s0"
+    status: "offline"
+
+  - ewon_name: "Ensign Rig 963"
+    equipment_type: "exi"
+    customer: "Ensign"
+    description: "EXI800 HP"
+    firmware: "EW_11_3s0"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 403"
+    equipment_type: "hxi_ss"
+    customer: "Precision"
+    description: "HXI Smart Slide Rx3i"
+    firmware: "13.2s1"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 254 Mobile"
+    equipment_type: "rostel"
+    customer: "Precision"
+    description: "Rostel Mobile Unit"
+    firmware: "14.9s4"
+    status: "offline"
+
+  - ewon_name: "Robinson Drilling Rig 11"
+    equipment_type: "unknown"
+    customer: "Robinson Drilling"
+    description: "HC Relay Logic"
+    firmware: "13.3s0"
+    status: "offline"
+
+  - ewon_name: "Excalibur Rig 11"
+    equipment_type: "unknown"
+    customer: "Excalibur"
+    description: ""
+    firmware: "14.4s0"
+    status: "offline"
+
+  - ewon_name: "Savanna Rig 416"
+    equipment_type: "fds"
+    customer: "Savanna"
+    description: "FDS 150 Smart Slide"
+    firmware: "14.2s0"
+    status: "offline"
+
+  - ewon_name: "Fox Rig 6 IR"
+    equipment_type: "unknown"
+    customer: "Fox Drilling"
+    description: ""
+    firmware: "EW_11_2s2"
+    status: "offline"
+
+  - ewon_name: "Steinburger Rig 3 VTech"
+    equipment_type: "warrior"
+    customer: "Steinburger"
+    description: "Warrior 250T"
+    firmware: "EW_11_0s0"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 309 HT"
+    equipment_type: "hxi_ht"
+    customer: "Precision"
+    description: "HXI HT"
+    firmware: "EW_11_2s1"
+    status: "offline"
+
+  - ewon_name: "Atlas Rig 7 HCI Smart Slide"
+    equipment_type: "hci"
+    customer: "Atlas"
+    description: ""
+    firmware: "EW_11_0s0"
+    status: "offline"
+
+  - ewon_name: "Savanna Rig 414"
+    equipment_type: "fds"
+    customer: "Savanna"
+    description: "FDS"
+    firmware: "14.4s1"
+    status: "offline"
+
+  - ewon_name: "Star Valley Rig 201 HXI"
+    equipment_type: "hxi_ss"
+    customer: "Star Valley"
+    description: "HXI Smart Slide"
+    firmware: "14.5s1"
+    status: "offline"
+
+  - ewon_name: "Atlas Rig 3"
+    equipment_type: "hxi"
+    customer: "Atlas"
+    description: "HXI PLC"
+    firmware: "14.5s1"
+    status: "offline"
+
+  - ewon_name: "John Energy Rig 16"
+    equipment_type: "smart_drive"
+    customer: "John Energy"
+    description: "ECI Smart Drive 007"
+    firmware: "EW_11_0s0"
+    status: "offline"
+
+  - ewon_name: "Videle Rig 1"
+    equipment_type: "hxi"
+    customer: "Videle"
+    description: "HXI (Old name Videle Rig *)"
+    firmware: "EW_11_3s0"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 703 HXI"
+    equipment_type: "hxi_ss"
+    customer: "Precision"
+    description: "HXI Smart Slide"
+    firmware: "14.5s1"
+    status: "offline"
+
+  - ewon_name: "ENSIGN RIG 438"
+    equipment_type: "hxi_ss"
+    customer: "Ensign"
+    description: "HXI SMART SLIDE"
+    firmware: "15.0s2"
+    status: "offline"
+
+  - ewon_name: "Atlas Rig 15"
+    equipment_type: "hxi"
+    customer: "Atlas"
+    description: "HXI"
+    firmware: "14.2s0"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 708"
+    equipment_type: "hxi"
+    customer: "Precision"
+    description: "HXI PLC old Ironhand 108"
+    firmware: "14.5s1"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 709"
+    equipment_type: "warrior"
+    customer: "Precision"
+    description: "Warrior 250T"
+    firmware: ""
+    status: "offline"
+
+  - ewon_name: "Precision Rig 199"
+    equipment_type: "rostel"
+    customer: "Precision"
+    description: "Rostel Smart Slide"
+    firmware: "14.6s0"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 701"
+    equipment_type: "hxi"
+    customer: "Precision"
+    description: "HXI top drive"
+    firmware: "14.6s0"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 151 new"
+    equipment_type: "unknown"
+    customer: "Precision"
+    description: ""
+    firmware: "13.2s1"
+    status: "offline"
+
+  - ewon_name: "Panther Rig 3"
+    equipment_type: "unknown"
+    customer: "Panther"
+    description: ""
+    firmware: "13.2s1"
+    status: "offline"
+
+  - ewon_name: "Excalibur Rig 10"
+    equipment_type: "hxi"
+    customer: "Excalibur"
+    description: "HXI"
+    firmware: "14.7s2"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 191"
+    equipment_type: "rostel"
+    customer: "Precision"
+    description: "Rostel"
+    firmware: "14.7s2"
+    status: "offline"
+
+  - ewon_name: "Savanna Rig 428"
+    equipment_type: "fds"
+    customer: "Savanna"
+    description: "FDS"
+    firmware: "14.7s2"
+    status: "offline"
+
+  - ewon_name: "Alliance Rig 3"
+    equipment_type: "hxi_relay"
+    customer: "Alliance"
+    description: "Relay Logic HXI"
+    firmware: "14.7s2"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 150"
+    equipment_type: "rostel"
+    customer: "Precision"
+    description: "Rostel"
+    firmware: "14.7s2"
+    status: "offline"
+
+  - ewon_name: "Savanna Rig 419"
+    equipment_type: "fds"
+    customer: "Savanna"
+    description: "FDS"
+    firmware: "14.9s3"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 195"
+    equipment_type: "unknown"
+    customer: "Precision"
+    description: ""
+    firmware: "14.7s2"
+    status: "offline"
+
+  - ewon_name: "Twilight Rig 3"
+    equipment_type: "warrior"
+    customer: "Twilight"
+    description: "Warrior upgraded Smart Slide"
+    firmware: "14.8s0"
+    status: "offline"
+
+  - ewon_name: "Precision Rig 702"
+    equipment_type: "unknown"
+    customer: "Precision"
+    description: ""
+    firmware: "14.9s4"
+    status: "offline"
+
+  - ewon_name: "PowerRig new backup"
+    equipment_type: "unknown"
+    customer: "PowerRig"
+    description: ""
+    firmware: "14.9s3"
+    status: "offline"

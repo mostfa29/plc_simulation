@@ -202,16 +202,29 @@ class FleetCatalog:
             logger.error(f"Failed to load fleet catalog: {e}")
 
     def find_by_ewon_name(self, name: str) -> Optional[FleetCatalogEntry]:
-        """Find a device by exact or partial eWon name match."""
-        # Exact match first
+        """Find a device by exact or best partial eWon name match.
+
+        For partial matches, returns the LONGEST matching entry so that
+        'Precision Rig 709 HXI HT' beats 'Precision Rig 709'.
+        """
+        # Exact match first (case-sensitive)
         for entry in self.entries:
             if entry.ewon_name == name:
                 return entry
-        # Case-insensitive partial match
+        # Case-insensitive exact match
         name_lower = name.lower()
         for entry in self.entries:
-            if name_lower in entry.ewon_name.lower():
+            if entry.ewon_name.lower() == name_lower:
                 return entry
+        # Partial match — collect all, return longest (most specific)
+        candidates = []
+        for entry in self.entries:
+            en = entry.ewon_name.lower()
+            if en and (name_lower in en or en in name_lower):
+                candidates.append(entry)
+        if candidates:
+            candidates.sort(key=lambda e: len(e.ewon_name), reverse=True)
+            return candidates[0]
         return None
 
     def find_by_customer(self, customer: str) -> List[FleetCatalogEntry]:
