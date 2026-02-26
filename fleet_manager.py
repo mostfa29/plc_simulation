@@ -471,7 +471,10 @@ class EWonDetector:
                                         r'^eCatcher\s*[-–]\s*', '', title,
                                         flags=_re.IGNORECASE
                                     ).strip()
-                                    if name:
+                                    # Filter out version strings like "Ecatcher (7.0.4)"
+                                    if name and not _re.match(
+                                        r'^[eE][cC]atcher\s*(\([\d.]+\))?$', name
+                                    ) and not _re.match(r'^\([\d.]+\)$', name):
                                         info['device_name'] = name
                                         return info
                 except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -503,7 +506,9 @@ class EWonDetector:
                                         r'^eCatcher\s*[-–]\s*', '', title,
                                         flags=_re.IGNORECASE
                                     ).strip()
-                                    if name and name.lower() != 'ecatcher':
+                                    if name and not _re.match(
+                                        r'^[eE][cC]atcher\s*(\([\d.]+\))?$', name
+                                    ) and not _re.match(r'^\([\d.]+\)$', name):
                                         info['device_name'] = name
                                         return info
                             break

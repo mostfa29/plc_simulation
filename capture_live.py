@@ -2365,6 +2365,93 @@ def _probe_known_ips(subnet: str, port: int = 502,
     return hosts
 
 
+def _scrape_ewon_name(ewon_ip: str, timeout: float = 4.0) -> str:
+    """Scrape the eWon gateway's web UI to get the device name.
+
+    The eWon Flexy/Cosy HTTP page at http://<ip>/ contains the device
+    name in the <title> tag, typically formatted as:
+        "eWon - DeviceName"  or  "<DeviceName>"
+
+    Also tries the eWon REST endpoint for the device name parameter.
+
+    Returns the device name string, or "" if not retrievable.
+    """
+    import urllib.request
+    import urllib.error
+
+    # Method 1: Fetch main web page and parse <title>
+    for path in ['/', '/index.shtm']:
+        try:
+            url = f"http://{ewon_ip}{path}"
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': 'text/html',
+            })
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            html = resp.read(8192).decode('utf-8', errors='replace')
+
+            # Parse <title> tag
+            m = re.search(r'<title[^>]*>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
+            if m:
+                title = m.group(1).strip()
+                # Strip "eWon - " or "eWON - " prefix
+                name = re.sub(r'^eWo[nN]\s*[-–:]\s*', '', title,
+                              flags=re.IGNORECASE).strip()
+                # Filter out generic titles
+                if name and name.lower() not in ('ewon', 'login', 'home', ''):
+                    return name
+
+            # Fallback: look for device name in page body
+            # eWon pages often have <span id="deviceName">DeviceName</span>
+            # or similar patterns
+            for pattern in [
+                r'id=["\']?deviceName["\']?[^>]*>([^<]+)',
+                r'DeviceName["\s:=]+([^"<\n]+)',
+                r'class=["\']ewon-name["\'][^>]*>([^<]+)',
+            ]:
+                m = re.search(pattern, html, re.IGNORECASE)
+                if m:
+                    name = m.group(1).strip()
+                    if name and len(name) > 2:
+                        return name
+
+        except (urllib.error.URLError, urllib.error.HTTPError,
+                OSError, TimeoutError, Exception):
+            continue
+
+    # Method 2: Try eWon REST API for device name parameter
+    try:
+        url = f"http://{ewon_ip}/rcgi.bin/ParamForm?AST_Param=$dtNM"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        body = resp.read(1024).decode('utf-8', errors='replace').strip()
+        # Response is typically just the device name as plain text
+        if body and len(body) < 200 and '<' not in body:
+            return body.strip()
+        # Or it may be in an HTML wrapper
+        m = re.search(r'>([^<]{3,})<', body)
+        if m:
+            return m.group(1).strip()
+    except Exception:
+        pass
+
+    # Method 3: Try eWon configuration export endpoint
+    try:
+        url = f"http://{ewon_ip}/rcgi.bin/ReadForm?AST_Param=$dtNM"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        body = resp.read(1024).decode('utf-8', errors='replace').strip()
+        if body and len(body) < 200:
+            # Strip any HTML/whitespace
+            clean = re.sub(r'<[^>]+>', '', body).strip()
+            if clean:
+                return clean
+    except Exception:
+        pass
+
+    return ""
+
+
 def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
                         rig_override: str = None
                         ) -> List[Tuple[str, 'MachineProfile']]:
@@ -2426,6 +2513,23 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
     if rig_override:
         device_name = rig_override.strip()
         print(f"  Using --rig override: \"{device_name}\"")
+
+    # If device name is still empty, try scraping the eWon web UI
+    if not device_name:
+        subnet_for_ewon = gw.rsplit('.', 1)[0]
+        ewon_ip = f"{subnet_for_ewon}.19"
+        print(f"  No device name from eCatcher — trying eWon web UI at {ewon_ip}...")
+        scraped = _scrape_ewon_name(ewon_ip)
+        if scraped:
+            device_name = scraped
+            print(f"  Got device name from eWon: \"{device_name}\"")
+        else:
+            # Try gateway IP too (in case eWon is not at .19)
+            if gw != ewon_ip and not gw.endswith('.0'):
+                scraped = _scrape_ewon_name(gw)
+                if scraped:
+                    device_name = scraped
+                    print(f"  Got device name from eWon ({gw}): \"{device_name}\"")
 
     if not device_name:
         print(f"  WARNING: Could not determine eWon device name.")
