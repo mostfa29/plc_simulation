@@ -637,17 +637,20 @@ class LANDiscovery:
         return parts[0] if len(parts) == 2 else ip
 
     def discover_hosts(self, timeout: float = 1.0) -> List[Dict]:
-        """Ping sweep + port scan the LAN.
+        """Parallel port scan of the eWon LAN.
+
+        Scans all 254 IPs concurrently using a thread pool. Typically
+        completes in 2-5 seconds even over high-latency VPN connections.
 
         Returns list of dicts with host info including Modbus capability.
         """
-        hosts = []
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         print(f"\n  Scanning {self.subnet}.1-254 ...")
+        hosts = []
 
-        for i in range(1, 255):
+        def _probe_ip(i):
             ip = f"{self.subnet}.{i}"
-
-            # TCP connect on Modbus port
             has_modbus = False
             latency = None
             try:
@@ -662,10 +665,19 @@ class LANDiscovery:
                     latency = round(elapsed, 1)
             except (socket.error, OSError):
                 pass
+            return ip, has_modbus, latency
 
-            # Check HTTP (port 80) for web UI
-            has_http = False
-            if has_modbus or ip == self.gateway_ip:
+        # Parallel scan — 50 threads, finishes in ~5 seconds
+        with ThreadPoolExecutor(max_workers=50) as pool:
+            futures = {pool.submit(_probe_ip, i): i for i in range(1, 255)}
+            for future in as_completed(futures):
+                ip, has_modbus, latency = future.result()
+
+                if not has_modbus and ip != self.gateway_ip:
+                    continue
+
+                # Check HTTP (port 80) for web UI
+                has_http = False
                 try:
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.settimeout(timeout)
@@ -675,18 +687,18 @@ class LANDiscovery:
                 except (socket.error, OSError):
                     pass
 
-            if has_modbus or has_http:
-                host_info = {
-                    'ip': ip,
-                    'has_modbus': has_modbus,
-                    'has_http': has_http,
-                    'modbus_port': self.modbus_port,
-                    'latency_ms': latency,
-                }
-                hosts.append(host_info)
-                print(f"    FOUND: {ip}  Modbus={'YES' if has_modbus else 'no'}  "
-                      f"HTTP={'YES' if has_http else 'no'}  "
-                      f"latency={latency}ms")
+                if has_modbus or has_http:
+                    host_info = {
+                        'ip': ip,
+                        'has_modbus': has_modbus,
+                        'has_http': has_http,
+                        'modbus_port': self.modbus_port,
+                        'latency_ms': latency,
+                    }
+                    hosts.append(host_info)
+                    print(f"    FOUND: {ip}  Modbus={'YES' if has_modbus else 'no'}  "
+                          f"HTTP={'YES' if has_http else 'no'}  "
+                          f"latency={latency}ms")
 
         print(f"\n  Found {len(hosts)} devices on {self.subnet}.0/24")
         return hosts

@@ -2393,8 +2393,24 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
     gw = tunnel['gateway_ip']
     device_name = (tunnel.get('device_name') or '').strip()
     latency = tunnel.get('latency_ms') or 0
+    method = tunnel.get('detection_method', '?')
     print(f"  VPN tunnel active: gateway={gw} "
-          f"device=\"{device_name}\" latency={latency:.0f}ms")
+          f"device=\"{device_name}\" latency={latency:.0f}ms "
+          f"(via {method})")
+
+    # Diagnostic: dump relevant route table entries for debugging
+    try:
+        import subprocess as _sp
+        rt = _sp.run(['route', 'PRINT'], capture_output=True,
+                     text=True, timeout=10)
+        ewon_lines = [ln.strip() for ln in rt.stdout.splitlines()
+                      if '129.168.' in ln]
+        if ewon_lines:
+            print(f"  Route table (129.168.x.x entries):")
+            for ln in ewon_lines[:5]:
+                print(f"    {ln}")
+    except Exception:
+        pass
 
     # --rig override takes priority over auto-detected device name
     if rig_override:
