@@ -359,7 +359,16 @@ class EWonDetector:
         return None
 
     def _detect_via_routes(self) -> Optional[str]:
-        """Check OS routing table for 129.168.x.x entries."""
+        """Check OS routing table for 129.168.x.x entries.
+
+        Windows `route PRINT` columns:
+          Network Destination  Netmask  Gateway  Interface  Metric
+          129.168.1.0    255.255.255.0  On-link  129.168.1.X  25
+
+        We extract all 129.168.x.x IPs from the line, skip network (.0)
+        and broadcast (.255) addresses, and return the best candidate
+        (the Interface IP is our local VPN address on the eWon subnet).
+        """
         system = platform.system().lower()
         try:
             if system == 'windows':
@@ -367,6 +376,25 @@ class EWonDetector:
                     ['route', 'PRINT'],
                     capture_output=True, text=True, timeout=10
                 )
+                candidates = []
+                for line in result.stdout.splitlines():
+                    if self.EWON_SUBNET_PREFIX in line:
+                        parts = line.split()
+                        for part in parts:
+                            if part.startswith(self.EWON_SUBNET_PREFIX):
+                                # Skip network (.0) and broadcast (.255)
+                                last_octet = part.rsplit('.', 1)[-1]
+                                if last_octet not in ('0', '255'):
+                                    candidates.append(part)
+                if candidates:
+                    # Prefer known gateway IPs (.19, .1), then any host IP
+                    for preferred in ('.19', '.1'):
+                        for c in candidates:
+                            if c.endswith(preferred):
+                                return c
+                    return candidates[0]
+                # No host IP found — return the network address and let
+                # the caller derive the subnet from it
                 for line in result.stdout.splitlines():
                     if self.EWON_SUBNET_PREFIX in line:
                         parts = line.split()
@@ -402,19 +430,27 @@ class EWonDetector:
         return None
 
     def _detect_via_ecatcher(self) -> Optional[Dict]:
-        """Parse eCatcher state for active device info."""
+        """Parse eCatcher state for active device info.
+
+        Tries multiple methods to get the connected device name:
+          1. eCatcher window title (via PowerShell Get-Process)
+          2. eCatcher log files (last connected device)
+          3. Talk2m VPN adapter name
+        """
         system = platform.system().lower()
         info = {}
 
         try:
             if system == 'windows':
+                # Check if eCatcher is running
                 result = subprocess.run(
                     ['tasklist', '/FI', 'IMAGENAME eq eCatcher.exe', '/FO', 'CSV'],
                     capture_output=True, text=True, timeout=10
                 )
                 if 'eCatcher.exe' in result.stdout:
                     info['ecatcher_running'] = True
-                    # Try to get window title for device name
+
+                    # Method 1: Window title
                     try:
                         ps_cmd = (
                             'Get-Process -Name eCatcher -ErrorAction SilentlyContinue '
@@ -425,11 +461,71 @@ class EWonDetector:
                             capture_output=True, text=True, timeout=10
                         )
                         title = ps_result.stdout.strip()
-                        if title and title != 'eCatcher':
-                            # Window title often contains device name when connected
-                            info['device_name'] = title.replace('eCatcher - ', '').strip()
+                        if title and title.lower() != 'ecatcher':
+                            # Title format: "eCatcher - Device Name" or just "Device Name"
+                            name = title.replace('eCatcher - ', '').replace('eCatcher -', '').strip()
+                            if name:
+                                info['device_name'] = name
+                                return info
                     except (subprocess.TimeoutExpired, FileNotFoundError):
                         pass
+
+                    # Method 2: VPN adapter description (often contains device name)
+                    try:
+                        ps_cmd = (
+                            'Get-NetAdapter | Where-Object {$_.InterfaceDescription '
+                            '-like \"*TAP*\" -or $_.InterfaceDescription -like \"*eWon*\" '
+                            '-or $_.InterfaceDescription -like \"*Talk2m*\" -or '
+                            '$_.Name -like \"*eWon*\" -or $_.Name -like \"*Talk2m*\"} '
+                            '| Select-Object -ExpandProperty Name'
+                        )
+                        ps_result = subprocess.run(
+                            ['powershell', '-Command', ps_cmd],
+                            capture_output=True, text=True, timeout=10
+                        )
+                        adapter = ps_result.stdout.strip()
+                        if adapter:
+                            info['vpn_adapter'] = adapter
+                    except (subprocess.TimeoutExpired, FileNotFoundError):
+                        pass
+
+                    # Method 3: eCatcher log files
+                    try:
+                        import glob as _glob
+                        log_dirs = [
+                            os.path.expandvars(r'%LOCALAPPDATA%\eWon\eCatcher'),
+                            os.path.expandvars(r'%APPDATA%\eWon\eCatcher'),
+                            os.path.expandvars(r'%LOCALAPPDATA%\Talk2m'),
+                            os.path.expandvars(r'%PROGRAMDATA%\eWon'),
+                        ]
+                        for d in log_dirs:
+                            logs = sorted(_glob.glob(os.path.join(d, '*.log')),
+                                          key=os.path.getmtime, reverse=True)
+                            for log_path in logs[:3]:
+                                try:
+                                    with open(log_path, 'r', errors='ignore') as lf:
+                                        # Read last 50 lines
+                                        lines = lf.readlines()[-50:]
+                                    for line in reversed(lines):
+                                        # Look for connection patterns
+                                        if 'connect' in line.lower() and (
+                                                'rig' in line.lower() or
+                                                'ewon' in line.lower() or
+                                                'device' in line.lower()):
+                                            # Try to extract device name
+                                            import re as _re
+                                            m = _re.search(
+                                                r'(?:to|device|connecting)\s*[:\s]+\s*"?([^"]+?)"?\s*$',
+                                                line, _re.IGNORECASE
+                                            )
+                                            if m:
+                                                info['device_name'] = m.group(1).strip()
+                                                return info
+                                except (OSError, IOError):
+                                    continue
+                    except Exception:
+                        pass
+
                     return info
             else:
                 result = subprocess.run(

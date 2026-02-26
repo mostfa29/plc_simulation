@@ -2320,14 +2320,51 @@ def display_multi_rigs(rig_states: dict, first_draw: list):
     sys.stdout.flush()
 
 
-def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0
+def _probe_known_ips(subnet: str, port: int = 502,
+                      timeout: float = 2.0) -> List[Dict]:
+    """Probe common PLC IPs on the eWon subnet.
+
+    When the full subnet scan finds nothing (VPN warm-up, firewall, etc.),
+    try connecting directly to IPs where PLCs are commonly found.
+    Uses longer timeout since VPN might be slow to establish routes.
+    """
+    # Common PLC IPs on eWon LANs (from Steve's fleet experience)
+    common_ips = ['.25', '.1', '.2', '.10', '.20', '.100', '.19']
+    hosts = []
+    print(f"  Probing common PLC IPs on {subnet}.x ...")
+    for suffix in common_ips:
+        ip = f"{subnet}{suffix}"
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            start = time.time()
+            result = sock.connect_ex((ip, port))
+            elapsed = (time.time() - start) * 1000
+            sock.close()
+            if result == 0:
+                print(f"    FOUND: {ip} (Modbus, {elapsed:.0f}ms)")
+                hosts.append({
+                    'ip': ip,
+                    'has_modbus': True,
+                    'has_http': False,
+                    'modbus_port': port,
+                    'latency_ms': round(elapsed, 1),
+                })
+        except (socket.error, OSError):
+            pass
+    return hosts
+
+
+def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
+                        rig_override: str = None
                         ) -> List[Tuple[str, 'MachineProfile']]:
     """Auto-discover all reachable PLCs: VPN detection → subnet scan → identify.
 
     Identification priority:
-      1. eWon device name → existing profile (by ewon_name field)
-      2. eWon device name → fleet CSV → equipment type → create profile
-      3. IP fallback if no eWon tunnel (local/direct connections)
+      1. --rig override → use that device name directly
+      2. eWon device name → existing profile (by ewon_name field)
+      3. eWon device name → fleet CSV → equipment type → create profile
+      4. IP fallback if no eWon tunnel (local/direct connections)
 
     IMPORTANT: The PLC's internal IP (e.g. 129.168.1.25) is NOT a reliable
     identifier because different rigs behind different eWon VPNs can have
@@ -2343,6 +2380,7 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0
         print(f"  Falling back to profile directory scan.")
         return _load_profiles_from_dir(profile_dir)
 
+    # Phase 1: Detect VPN tunnel
     print(f"\n  Phase 1: Detecting eWon VPN tunnel...")
     detector = EWonDetector()
     tunnel = detector.detect_active_tunnel()
@@ -2358,6 +2396,16 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0
     print(f"  VPN tunnel active: gateway={gw} "
           f"device=\"{device_name}\" latency={latency:.0f}ms")
 
+    # --rig override takes priority over auto-detected device name
+    if rig_override:
+        device_name = rig_override.strip()
+        print(f"  Using --rig override: \"{device_name}\"")
+
+    if not device_name:
+        print(f"  WARNING: Could not determine eWon device name.")
+        print(f"  TIP: Use --rig \"Device Name\" to specify manually.")
+        print(f"       Example: --rig \"Tacrom Futura 5\"")
+
     # Load fleet list for equipment type lookup
     fleet = _load_ewon_fleet()
     fleet_entry = _match_fleet_entry(device_name, fleet) if device_name else None
@@ -2365,23 +2413,42 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0
         etype = fleet_entry.get("equipment_type", "unknown")
         cust = fleet_entry.get("customer", "")
         print(f"  Fleet match: customer={cust} type={etype}")
+    elif device_name:
+        etype = _detect_equipment_type(device_name)
+        print(f"  No fleet CSV match — auto-detected type: {etype}")
+        fleet_entry = {
+            "ewon_name": device_name,
+            "equipment_type": etype,
+            "customer": _parse_rig_name(device_name)[0],
+        }
     else:
-        print(f"  No fleet match for \"{device_name}\" (will auto-detect type)")
+        fleet_entry = None
 
     # Phase 2: Scan subnet for Modbus hosts
+    # Derive subnet from gateway (even if gateway is .0 network addr)
+    subnet_base = gw.rsplit('.', 1)[0]  # "129.168.1"
     print(f"\n  Phase 2: Scanning LAN for Modbus devices...")
     lan = LANDiscovery(gw)
-    hosts = lan.discover_hosts(timeout=1.0)
+    hosts = lan.discover_hosts(timeout=1.5)
     modbus_hosts = [h for h in hosts if h.get('has_modbus')]
 
+    # Fallback: if scan found nothing, probe common PLC IPs directly
     if not modbus_hosts:
-        print(f"  No Modbus devices found on subnet.")
+        print(f"  Full scan found nothing — trying common PLC IPs...")
+        modbus_hosts = _probe_known_ips(f"{subnet_base}.", timeout=3.0)
+
+    if not modbus_hosts:
+        print(f"\n  No Modbus devices reachable on {subnet_base}.x")
+        print(f"  Possible causes:")
+        print(f"    - eWon VPN still connecting (wait a few seconds, retry)")
+        print(f"    - Firewall blocking Python outbound connections")
+        print(f"    - PLC on a different subnet")
         return []
 
     print(f"  Found {len(modbus_hosts)} Modbus device(s)")
 
     # Phase 3: Identify PLCs using eWon device name (NOT IP)
-    print(f"\n  Phase 3: Identifying rig from eWon device name...")
+    print(f"\n  Phase 3: Identifying rig...")
     results = []
 
     for host_info in modbus_hosts:
@@ -2391,6 +2458,18 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0
         # Skip the eWon gateway itself
         if ip == gw:
             print(f"    {ip} — eWon gateway (skipped)")
+            continue
+
+        if not device_name:
+            # No device name — can't identify, create generic profile
+            print(f"    {ip} — Unknown rig (no device name)")
+            prof_path, prof = _create_rig_profile(
+                ip=ip, port=port,
+                device_name=f"unknown_{ip.replace('.', '_')}",
+                fleet_entry=None,
+                profile_dir=profile_dir,
+            )
+            results.append((prof_path, prof))
             continue
 
         # Strategy 1: Find existing profile by eWon device name
@@ -2469,7 +2548,9 @@ def run_multi_capture(args):
     print("=" * 60)
 
     # Auto-discover or load profiles
-    profiles = _auto_discover_rigs(profile_dir, timeout=args.timeout)
+    rig_override = getattr(args, 'rig', None)
+    profiles = _auto_discover_rigs(profile_dir, timeout=args.timeout,
+                                    rig_override=rig_override)
 
     if not profiles:
         print(f"\n  No reachable PLCs found. Check VPN connection.")
@@ -2605,6 +2686,9 @@ Examples:
     # Multi-rig concurrent capture
     parser.add_argument("--multi", action="store_true",
                         help="Capture from all rigs concurrently (reads all profiles)")
+    parser.add_argument("--rig", type=str, default=None,
+                        help="eWon device name override, e.g. --rig \"Tacrom Futura 5\". "
+                             "Skips VPN auto-detection, uses this name for fleet lookup.")
     parser.add_argument("--profile-dir", default="./profiles",
                         help="Directory with .yaml profiles for --multi (default: ./profiles)")
 
