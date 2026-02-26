@@ -305,10 +305,11 @@ def decode_int32(word_a: int, word_b: int, word_swap: bool = False,
                  signed: bool = True) -> int:
     """Decode 32-bit integer from two consecutive 16-bit registers.
 
-    NOTE: word_swap defaults to False because GE PLCs only word-swap
-    FLOAT32 values. INT32 always uses standard order (MSW at N, LSW at N+1)
-    even on GE hardware. Pass word_swap=True only for non-standard PLCs
-    that swap integer word order.
+    Args:
+        word_a: Register at address N.
+        word_b: Register at address N+1.
+        word_swap: True = GE convention (low word at N, high word at N+1).
+                   Same swap logic as FLOAT32 on GE CPE305 PLCs.
     """
     if word_swap:
         packed = struct.pack('>HH', word_b, word_a)
@@ -352,9 +353,9 @@ def decode_registers(raw_regs: List[int], reg_start: int,
             if offset + 1 >= len(raw_regs):
                 values[name] = 0.0
                 continue
-            # INT32 uses standard word order (MSW@N) even on GE PLCs
+            # GE CPE305 word-swaps all 32-bit values (float AND int)
             val = float(decode_int32(raw_regs[offset], raw_regs[offset + 1],
-                                     word_swap=False,
+                                     word_swap=word_swap,
                                      signed=(rtype == "INT32")))
         elif rtype == "INT16":
             val = float(raw_regs[offset])
@@ -388,8 +389,8 @@ def decode_registers_from_dict(reg_dict: Dict[int, int],
         elif rtype in ("INT32", "UINT32"):
             word_a = reg_dict.get(addr, 0)
             word_b = reg_dict.get(addr + 1, 0)
-            # INT32 uses standard word order (MSW@N) even on GE PLCs
-            val = float(decode_int32(word_a, word_b, word_swap=False,
+            # GE CPE305 word-swaps all 32-bit values (float AND int)
+            val = float(decode_int32(word_a, word_b, word_swap=word_swap,
                                      signed=(rtype == "INT32")))
         elif rtype == "INT16":
             val = float(reg_dict.get(addr, 0))
