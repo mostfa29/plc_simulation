@@ -442,33 +442,73 @@ class EWonDetector:
 
         try:
             if system == 'windows':
-                # Check if eCatcher is running
+                # Method 1: Search ALL windows for eCatcher title
+                # (handles eCatcher.exe, ecatcher64.exe, etc.)
+                try:
+                    ps_cmd = (
+                        'Get-Process | Where-Object '
+                        '{$_.MainWindowTitle -like \"*eCatcher*\" -or '
+                        '$_.ProcessName -like \"*eCatcher*\" -or '
+                        '$_.ProcessName -like \"*ecatcher*\"} '
+                        '| Select-Object ProcessName, MainWindowTitle '
+                        '| Format-List'
+                    )
+                    ps_result = subprocess.run(
+                        ['powershell', '-Command', ps_cmd],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    output = ps_result.stdout.strip()
+                    if output:
+                        info['ecatcher_running'] = True
+                        # Extract window title
+                        for line in output.splitlines():
+                            if 'MainWindowTitle' in line:
+                                title = line.split(':', 1)[-1].strip()
+                                if title and title.lower() != 'ecatcher':
+                                    import re as _re
+                                    # Strip "eCatcher - " prefix
+                                    name = _re.sub(
+                                        r'^eCatcher\s*[-–]\s*', '', title,
+                                        flags=_re.IGNORECASE
+                                    ).strip()
+                                    if name:
+                                        info['device_name'] = name
+                                        return info
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    pass
+
+                # Method 1b: Fallback — check tasklist directly
                 result = subprocess.run(
                     ['tasklist', '/FI', 'IMAGENAME eq eCatcher.exe', '/FO', 'CSV'],
                     capture_output=True, text=True, timeout=10
                 )
-                if 'eCatcher.exe' in result.stdout:
+                if 'eCatcher' not in result.stdout:
+                    # Try alternate names
+                    result = subprocess.run(
+                        ['tasklist', '/V', '/FO', 'CSV'],
+                        capture_output=True, timeout=10,
+                        text=True, errors='replace'
+                    )
+                    for line in result.stdout.splitlines():
+                        low = line.lower()
+                        if 'ecatcher' in low:
+                            info['ecatcher_running'] = True
+                            # CSV: "Name","PID",...,"Window Title"
+                            parts = line.split('","')
+                            if len(parts) >= 9:
+                                title = parts[-1].strip('"').strip()
+                                if title and title != 'N/A':
+                                    import re as _re
+                                    name = _re.sub(
+                                        r'^eCatcher\s*[-–]\s*', '', title,
+                                        flags=_re.IGNORECASE
+                                    ).strip()
+                                    if name and name.lower() != 'ecatcher':
+                                        info['device_name'] = name
+                                        return info
+                            break
+                else:
                     info['ecatcher_running'] = True
-
-                    # Method 1: Window title
-                    try:
-                        ps_cmd = (
-                            'Get-Process -Name eCatcher -ErrorAction SilentlyContinue '
-                            '| Select-Object -ExpandProperty MainWindowTitle'
-                        )
-                        ps_result = subprocess.run(
-                            ['powershell', '-Command', ps_cmd],
-                            capture_output=True, text=True, timeout=10
-                        )
-                        title = ps_result.stdout.strip()
-                        if title and title.lower() != 'ecatcher':
-                            # Title format: "eCatcher - Device Name" or just "Device Name"
-                            name = title.replace('eCatcher - ', '').replace('eCatcher -', '').strip()
-                            if name:
-                                info['device_name'] = name
-                                return info
-                    except (subprocess.TimeoutExpired, FileNotFoundError):
-                        pass
 
                     # Method 2: VPN adapter description (often contains device name)
                     try:

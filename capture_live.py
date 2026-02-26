@@ -1911,10 +1911,15 @@ def _create_rig_profile(ip: str, port: int, device_name: str,
     # Build a clean profile name
     cust_clean = re.sub(r'[^a-z0-9]', '_', customer.lower()).strip('_')
     rig_clean = re.sub(r'[^a-z0-9]', '_', rig_id.lower()).strip('_')
-    if rig_clean:
+    if rig_clean and cust_clean:
         prof_name = f"{cust_clean}_rig_{rig_clean}"
+    elif cust_clean:
+        prof_name = f"{cust_clean}"
     else:
-        prof_name = f"{cust_clean}_{ip.replace('.', '_')}"
+        # Fallback: use IP-based name (avoid duplication)
+        prof_name = f"rig_{ip.replace('.', '_')}"
+    # Truncate to avoid absurdly long filenames
+    prof_name = prof_name[:40]
 
     # Build register map from template if available
     template = EQUIPMENT_REG_TEMPLATES.get(equipment_type)
@@ -2503,12 +2508,20 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
     print(f"\n  Phase 3: Identifying rig...")
     results = []
 
+    # Build set of IPs to skip (eWon gateways)
+    skip_ips = {gw}
+    # When gw is .0 (network address from route table), also skip
+    # common eWon gateway IPs (.19 is the standard eWon LAN address)
+    if gw.endswith('.0'):
+        skip_ips.add(f"{subnet_base}.19")
+        skip_ips.add(f"{subnet_base}.1")  # Sometimes at .1
+
     for host_info in modbus_hosts:
         ip = host_info['ip']
         port = host_info.get('modbus_port', 502)
 
-        # Skip the eWon gateway itself
-        if ip == gw:
+        # Skip eWon gateways
+        if ip in skip_ips:
             print(f"    {ip} — eWon gateway (skipped)")
             continue
 
@@ -2517,7 +2530,7 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
             print(f"    {ip} — Unknown rig (no device name)")
             prof_path, prof = _create_rig_profile(
                 ip=ip, port=port,
-                device_name=f"unknown_{ip.replace('.', '_')}",
+                device_name=f"rig_{ip.rsplit('.', 1)[-1]}",
                 fleet_entry=None,
                 profile_dir=profile_dir,
             )
