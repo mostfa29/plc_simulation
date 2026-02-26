@@ -27,6 +27,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import signal
 import socket
 import struct
@@ -37,7 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from config import MachineProfile, DEFAULT_REG_MAP
+from config import MachineProfile, RegisterDef, DEFAULT_REG_MAP
 
 # Late imports for auto-discovery (only used in --multi mode)
 # These are imported inside functions to avoid breaking --host mode
@@ -1703,6 +1704,254 @@ def build_dataset(args):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Fleet Identification & Equipment Type Templates
+# ═══════════════════════════════════════════════════════════════════
+
+# Register map templates per equipment family.
+# HXI confirmed from Precision Rig 709 live capture (2026-02-26).
+# HXI variants (SS, standard, relay) share the same GE CPE305 PLC
+# program, so register layout is the same.  Other equipment families
+# will use adaptive scan until we capture & confirm their layout.
+
+_HXI_REG_TEMPLATE = {
+    "torque":           {"address": 163, "data_type": "FLOAT32", "unit": "ft-lbs",
+                         "description": "Torque — confirmed on HXI HT (Rig 709)"},
+    "turns":            {"address": 165, "data_type": "FLOAT32", "unit": "turns",
+                         "description": "Turns — confirmed on HXI HT"},
+    "temperature":      {"address": 167, "data_type": "FLOAT32", "unit": "degF",
+                         "description": "Oil temp — confirmed on HXI HT"},
+    "rpm":              {"address": 169, "data_type": "FLOAT32", "unit": "RPM",
+                         "description": "RPM — confirmed on HXI HT"},
+    "hookload":         {"address": 189, "data_type": "FLOAT32", "unit": "lbs",
+                         "scale": 0.001,
+                         "description": "Hookload — confirmed on HXI HT"},
+    "encoder_counts":   {"address": 2076, "data_type": "INT32", "unit": "counts",
+                         "description": "Encoder — confirmed on HXI HT"},
+    "connection_state": {"address": 175, "data_type": "INT16", "unit": "enum",
+                         "description": "Connection state — likely, verify"},
+    "target_torque":    {"address": 178, "data_type": "INT16", "unit": "ft-lbs",
+                         "description": "Target torque — likely, verify"},
+    "shoulder_torque":  {"address": 180, "data_type": "INT16", "unit": "ft-lbs",
+                         "description": "Shoulder torque — likely, verify"},
+    "connection_count": {"address": 185, "data_type": "INT16", "unit": "count",
+                         "description": "Connection count — likely, verify"},
+}
+
+# Equipment types that share the HXI register layout
+_HXI_FAMILY = {"hxi", "hxi_ht", "hxi_ss", "hxi_standard", "hxi_relay"}
+
+EQUIPMENT_REG_TEMPLATES = {
+    # All HXI variants share same PLC program → same register map
+    etype: _HXI_REG_TEMPLATE for etype in _HXI_FAMILY
+}
+# Other families (exi, fds, rostel, warrior, smart_drive, eci, emi,
+# hci, hmi, powerrig) — no confirmed template yet.  Will use adaptive
+# scan on first connection and save the discovered layout.
+
+
+def _detect_equipment_type(device_name: str, description: str = "") -> str:
+    """Detect equipment type from eWon device name and description.
+
+    Checks both fields for known equipment keywords.  Returns normalized
+    type string: hxi_ht, hxi_ss, hxi, exi, fds, rostel, warrior, etc.
+    """
+    text = f"{device_name} | {description}".upper()
+
+    # HXI variants (most specific first)
+    if "HXI" in text:
+        if any(kw in text for kw in ("HT", "3SPD", "3 SPD")):
+            return "hxi_ht"
+        if any(kw in text for kw in ("SMART SLIDE", "HXI SS", " SS")):
+            return "hxi_ss"
+        if "RELAY" in text:
+            return "hxi_relay"
+        return "hxi"
+
+    # Other equipment families
+    if "EXI" in text:
+        return "exi"
+    if "FDS" in text:
+        return "fds"
+    if "ROSTEL" in text:
+        return "rostel"
+    if "WARRIOR" in text:
+        return "warrior"
+    if "SMART DRIVE" in text:
+        return "smart_drive"
+    if "ECI" in text:
+        return "eci"
+    if "EMI" in text:
+        return "emi"
+    if "HCI" in text:
+        return "hci"
+    if "HMI" in text:
+        return "hmi"
+    if "POWERRIG" in text or "POWER RIG" in text:
+        if "EXI" in description.upper():
+            return "exi"
+        return "powerrig"
+    return "unknown"
+
+
+def _parse_rig_name(device_name: str) -> Tuple[str, str]:
+    """Parse customer and rig identifier from eWon device name.
+
+    Returns (customer, rig_id) e.g. ("Precision", "709"), ("Ensign", "T419").
+    """
+    import re
+    # Strip equipment-type keywords for cleaner parsing
+    clean = re.sub(
+        r'\b(HXI|HT|EXI|FDS|Smart Slide|SS|Rostel|Warrior|'
+        r'Relay Logic|3Spd|3 SPD|PLC|Standard|Smart Drive|'
+        r'ECI|EMI|HCI|HMI|Smart Slide)\b',
+        '', device_name, flags=re.IGNORECASE
+    ).strip()
+    # Remove trailing whitespace clumps
+    clean = re.sub(r'\s+', ' ', clean).strip()
+
+    # Pattern: "{Customer} Rig {Number} ..."
+    m = re.match(r'^(.+?)\s+Rig\s+(\S+)', clean, re.IGNORECASE)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    # Pattern: "{Customer} {TNumber}" (Ensign T419)
+    m = re.match(r'^(.+?)\s+(T\d+)\b', clean, re.IGNORECASE)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    # Pattern: "{Customer} R{Number}" (Akita R523)
+    m = re.match(r'^(.+?)\s+(R\d+)\b', clean, re.IGNORECASE)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    return device_name.strip(), ""
+
+
+def _load_ewon_fleet(fleet_path: str = None) -> List[Dict]:
+    """Load eWon fleet list from CSV.  Returns list of fleet entries."""
+    import csv
+    if fleet_path is None:
+        fleet_path = str(Path(__file__).parent / "profiles" / "ewon_fleet.csv")
+    entries = []
+    try:
+        with open(fleet_path, 'r', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                entries.append(row)
+    except FileNotFoundError:
+        pass
+    return entries
+
+
+def _match_fleet_entry(device_name: str,
+                        fleet: List[Dict]) -> Optional[Dict]:
+    """Find best fleet entry match for an eWon device name."""
+    import re
+    dn = device_name.strip()
+    dn_upper = dn.upper()
+    dn_norm = re.sub(r'\s+', ' ', dn_upper)
+
+    # Exact match
+    for entry in fleet:
+        if entry.get("ewon_name", "").strip() == dn:
+            return entry
+
+    # Case-insensitive normalised match
+    for entry in fleet:
+        en = re.sub(r'\s+', ' ', entry.get("ewon_name", "").strip().upper())
+        if en == dn_norm:
+            return entry
+
+    # Partial match — device name contains fleet name or vice versa
+    for entry in fleet:
+        en = entry.get("ewon_name", "").strip().upper()
+        if en and len(en) > 5 and (en in dn_upper or dn_upper in en):
+            return entry
+
+    return None
+
+
+def _find_profile_by_ewon(profile_dir: str,
+                           ewon_name: str) -> Optional[Tuple[str, 'MachineProfile']]:
+    """Find an existing profile whose ewon_name matches. Returns (path, profile)."""
+    import re
+    target = re.sub(r'\s+', ' ', ewon_name.strip().upper())
+    for f in Path(profile_dir).glob("*.yaml"):
+        try:
+            p = MachineProfile.from_yaml(str(f))
+            pn = re.sub(r'\s+', ' ', (p.ewon_name or "").strip().upper())
+            if pn and pn == target:
+                return (str(f), p)
+        except Exception:
+            continue
+    return None
+
+
+def _create_rig_profile(ip: str, port: int, device_name: str,
+                         fleet_entry: Optional[Dict],
+                         profile_dir: str,
+                         unit_id: int = 0,
+                         word_swap: bool = True) -> Tuple[str, 'MachineProfile']:
+    """Create a new rig profile from fleet data and equipment type.
+
+    If the equipment type has a known register template (e.g. HXI family),
+    the profile gets the full register map immediately.  Otherwise, the
+    profile is created with an empty reg_map and will use adaptive scan.
+    """
+    # Determine equipment type and identity
+    desc = (fleet_entry or {}).get("description", "")
+    equipment_type = _detect_equipment_type(device_name, desc)
+
+    # Customer / rig from fleet CSV or parsed from device name
+    if fleet_entry:
+        customer = fleet_entry.get("customer", "")
+        _, rig_id = _parse_rig_name(device_name)
+    else:
+        customer, rig_id = _parse_rig_name(device_name)
+
+    # Build a clean profile name
+    cust_clean = re.sub(r'[^a-z0-9]', '_', customer.lower()).strip('_')
+    rig_clean = re.sub(r'[^a-z0-9]', '_', rig_id.lower()).strip('_')
+    if rig_clean:
+        prof_name = f"{cust_clean}_rig_{rig_clean}"
+    else:
+        prof_name = f"{cust_clean}_{ip.replace('.', '_')}"
+
+    # Build register map from template if available
+    template = EQUIPMENT_REG_TEMPLATES.get(equipment_type)
+    reg_map = {}
+    if template:
+        for rname, rdef in template.items():
+            reg_map[rname] = RegisterDef(
+                address=rdef["address"],
+                data_type=rdef["data_type"],
+                unit=rdef.get("unit", ""),
+                scale=rdef.get("scale", 1.0),
+                offset=rdef.get("offset", 0.0),
+                description=rdef.get("description", ""),
+            )
+
+    profile = MachineProfile(
+        name=prof_name,
+        plc_ip=ip,
+        plc_port=port,
+        unit_id=unit_id,
+        word_swap=word_swap,
+        equipment_type=equipment_type,
+        customer=customer,
+        ewon_name=device_name.strip(),
+        reg_map=reg_map,
+    )
+
+    out_path = Path(profile_dir) / f"{prof_name}.yaml"
+    profile.to_yaml(str(out_path))
+
+    tmpl_str = f"template={equipment_type}" if template else "no template (will scan)"
+    print(f"    {ip} — Created: {out_path.name} "
+          f"(customer={customer}, type={equipment_type}, {tmpl_str})")
+    return (str(out_path), profile)
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Multi-Rig Concurrent Capture
 # ═══════════════════════════════════════════════════════════════════
 
@@ -2075,10 +2324,19 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0
                         ) -> List[Tuple[str, 'MachineProfile']]:
     """Auto-discover all reachable PLCs: VPN detection → subnet scan → identify.
 
+    Identification priority:
+      1. eWon device name → existing profile (by ewon_name field)
+      2. eWon device name → fleet CSV → equipment type → create profile
+      3. IP fallback if no eWon tunnel (local/direct connections)
+
+    IMPORTANT: The PLC's internal IP (e.g. 129.168.1.25) is NOT a reliable
+    identifier because different rigs behind different eWon VPNs can have
+    the same internal IP.  The eWon device name IS the reliable identifier.
+
     Returns list of (profile_path, MachineProfile) for each discovered rig.
     """
     try:
-        from fleet_manager import EWonDetector, LANDiscovery, MachineIdentifier
+        from fleet_manager import EWonDetector, LANDiscovery
         from discover_machine import find_unit_id, verify_word_swap
     except ImportError as e:
         print(f"  WARNING: Auto-discovery unavailable ({e})")
@@ -2095,10 +2353,20 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0
         return _load_profiles_from_dir(profile_dir)
 
     gw = tunnel['gateway_ip']
-    device = tunnel.get('device_name') or 'unknown'
+    device_name = (tunnel.get('device_name') or '').strip()
     latency = tunnel.get('latency_ms') or 0
-    print(f"  VPN tunnel active: gateway={gw} device=\"{device}\" "
-          f"latency={latency:.0f}ms")
+    print(f"  VPN tunnel active: gateway={gw} "
+          f"device=\"{device_name}\" latency={latency:.0f}ms")
+
+    # Load fleet list for equipment type lookup
+    fleet = _load_ewon_fleet()
+    fleet_entry = _match_fleet_entry(device_name, fleet) if device_name else None
+    if fleet_entry:
+        etype = fleet_entry.get("equipment_type", "unknown")
+        cust = fleet_entry.get("customer", "")
+        print(f"  Fleet match: customer={cust} type={etype}")
+    else:
+        print(f"  No fleet match for \"{device_name}\" (will auto-detect type)")
 
     # Phase 2: Scan subnet for Modbus hosts
     print(f"\n  Phase 2: Scanning LAN for Modbus devices...")
@@ -2108,58 +2376,58 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0
 
     if not modbus_hosts:
         print(f"  No Modbus devices found on subnet.")
-        return _load_profiles_from_dir(profile_dir)
+        return []
 
-    print(f"\n  Found {len(modbus_hosts)} Modbus device(s)")
+    print(f"  Found {len(modbus_hosts)} Modbus device(s)")
 
-    # Phase 3: Match each host to a profile or create a new one
-    print(f"\n  Phase 3: Identifying machines...")
-    identifier = MachineIdentifier(profile_dir)
+    # Phase 3: Identify PLCs using eWon device name (NOT IP)
+    print(f"\n  Phase 3: Identifying rig from eWon device name...")
     results = []
 
     for host_info in modbus_hosts:
         ip = host_info['ip']
         port = host_info.get('modbus_port', 502)
 
-        # Skip the eWon gateway itself (usually has Modbus but no real data)
+        # Skip the eWon gateway itself
         if ip == gw:
             print(f"    {ip} — eWon gateway (skipped)")
             continue
 
-        match_type, profile = identifier.identify({'ip': ip},
-                                                   ewon_name=device)
+        # Strategy 1: Find existing profile by eWon device name
+        existing = _find_profile_by_ewon(profile_dir, device_name)
+        if existing:
+            prof_path, prof = existing
+            # Update IP in case it changed (eWon can reassign)
+            if prof.plc_ip != ip:
+                print(f"    {ip} — IP changed (was {prof.plc_ip}), "
+                      f"updating profile")
+                prof.plc_ip = ip
+                prof.to_yaml(prof_path)
+            print(f"    {ip} — KNOWN: {prof.name} "
+                  f"(matched by eWon name \"{device_name}\")")
+            results.append((prof_path, prof))
+            continue
 
-        if match_type == 'exact_ip' and profile:
-            # Known machine — use existing profile
-            profile_path = str(Path(profile_dir) / f"{profile.name}.yaml")
-            print(f"    {ip} — KNOWN: {profile.name} (loaded profile)")
-            results.append((profile_path, profile))
-        else:
-            # Unknown machine — quick fingerprint and create temp profile
-            print(f"    {ip} — NEW machine, creating profile...")
-            try:
-                uid = find_unit_id(ip, port, timeout)
-                ws = verify_word_swap(ip, port, uid, timeout)
-                # Create minimal profile
-                rig_name = f"auto_{ip.replace('.', '_')}"
-                new_profile = MachineProfile(
-                    name=rig_name,
-                    plc_ip=ip,
-                    plc_port=port,
-                    unit_id=uid,
-                    word_swap=ws,
-                    equipment_type="unknown",
-                    customer="auto_discovered",
-                    ewon_name=device,
-                )
-                # Save to profiles/ for future use
-                out_path = Path(profile_dir) / f"{rig_name}.yaml"
-                new_profile.to_yaml(str(out_path))
-                print(f"    {ip} — Created: {out_path.name} "
-                      f"(uid={uid}, ws={ws})")
-                results.append((str(out_path), new_profile))
-            except Exception as e:
-                print(f"    {ip} — Failed to onboard: {e}")
+        # Strategy 2: New machine — identify from fleet + create profile
+        print(f"    {ip} — New rig: \"{device_name}\"")
+        try:
+            uid = find_unit_id(ip, port, timeout)
+            ws = verify_word_swap(ip, port, uid, timeout)
+        except Exception as e:
+            print(f"    {ip} — PLC probe failed: {e} "
+                  f"(using defaults uid=0, ws=True)")
+            uid = 0
+            ws = True
+
+        prof_path, prof = _create_rig_profile(
+            ip=ip, port=port,
+            device_name=device_name,
+            fleet_entry=fleet_entry,
+            profile_dir=profile_dir,
+            unit_id=uid,
+            word_swap=ws,
+        )
+        results.append((prof_path, prof))
 
     return results
 
