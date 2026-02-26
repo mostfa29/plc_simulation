@@ -1737,10 +1737,12 @@ def _quick_register_scan(client: 'ModbusTCPClient',
 
 
 def _build_adaptive_blocks(nonzero_regs: Dict[int, int],
-                           reg_map: Dict = None) -> List[Tuple[int, int]]:
+                           reg_map: Dict = None,
+                           max_total: int = 80) -> List[Tuple[int, int]]:
     """Build optimal block reads from discovered non-zero registers.
 
     Clusters nearby registers into blocks with padding, splits >125.
+    Caps total registers to max_total to prevent VPN latency explosion.
     """
     all_addrs = set(nonzero_regs.keys())
     if reg_map:
@@ -1777,6 +1779,59 @@ def _build_adaptive_blocks(nonzero_regs: Dict[int, int],
             bc -= 125
         if bc > 0:
             final.append((bs, bc))
+    return final
+
+
+def _build_profile_blocks(reg_map: Dict, pad_before: int = 3,
+                           pad_after: int = 12) -> List[Tuple[int, int]]:
+    """Build block reads from known profile reg_map with generous padding.
+
+    For known profiles, we pad around mapped register clusters to catch
+    nearby unmapped registers without scanning the entire register space.
+    This keeps block reads tight (~50-80 registers) for 2+ Hz poll rates
+    over high-latency eWon VPN connections (~400ms per Modbus read).
+    """
+    all_addrs = []
+    for info in reg_map.values():
+        addr = info['addr']
+        all_addrs.append(addr)
+        if info['type'] in ('FLOAT32', 'INT32', 'UINT32'):
+            all_addrs.append(addr + 1)
+
+    if not all_addrs:
+        return [(0, 10)]  # Fallback
+
+    sorted_addrs = sorted(set(all_addrs))
+
+    # Cluster with gap threshold of 20
+    clusters = [[sorted_addrs[0]]]
+    for a in sorted_addrs[1:]:
+        if a - clusters[-1][-1] > 20:
+            clusters.append([a])
+        else:
+            clusters[-1].append(a)
+
+    # Pad each cluster generously to capture nearby unmapped registers
+    blocks = []
+    for cluster in clusters:
+        start = max(0, min(cluster) - pad_before)
+        end = max(cluster) + pad_after
+        count = end - start + 1
+        blocks.append((start, count))
+
+    # Split blocks > 125 (Modbus FC03 limit)
+    final = []
+    for bs, bc in blocks:
+        while bc > 125:
+            final.append((bs, 125))
+            bs += 125
+            bc -= 125
+        if bc > 0:
+            final.append((bs, bc))
+
+    total = sum(bc for _, bc in final)
+    print(f"    Profile blocks: {len(final)} block(s), {total} registers "
+          f"(clusters: {len(clusters)})")
     return final
 
 
@@ -1819,17 +1874,37 @@ def _rig_worker(profile_path: str, profile: 'MachineProfile',
                 shared_state["error"] = None
                 reconnect_delay = 1.0
 
-                # Adaptive scan on first connect: discover ALL registers
+                # Block read strategy: known profiles use tight padded
+                # blocks around mapped registers (fast).  Unknown/auto
+                # profiles do adaptive scan to discover registers.
                 if not scan_done and smart_mode:
-                    shared_state["error"] = "Scanning..."
-                    try:
-                        nonzero = _quick_register_scan(client)
-                        if nonzero:
-                            block_reads = _build_adaptive_blocks(nonzero, reg_map)
-                            shared_state["scan_regs"] = len(nonzero)
-                        scan_done = True
-                    except Exception:
-                        scan_done = True  # Don't retry, use profile blocks
+                    if len(reg_map) >= 3:
+                        # Known profile — tight blocks, no full scan
+                        block_reads = _build_profile_blocks(reg_map)
+                        shared_state["scan_regs"] = sum(
+                            bc for _, bc in block_reads)
+                    else:
+                        # Unknown/auto profile — adaptive scan
+                        shared_state["error"] = "Scanning..."
+                        try:
+                            nonzero = _quick_register_scan(client)
+                            n_found = len(nonzero) if nonzero else 0
+                            shared_state["scan_regs"] = n_found
+                            # Gateway check: very few registers
+                            # means eWon gateway, not a real PLC
+                            if n_found < 15:
+                                shared_state["error"] = (
+                                    f"Only {n_found} regs "
+                                    f"— skipping (likely gateway)")
+                                shared_state["connected"] = False
+                                client.close()
+                                scan_done = True
+                                return  # Exit worker thread
+                            block_reads = _build_adaptive_blocks(
+                                nonzero, reg_map)
+                        except Exception:
+                            pass  # Use profile blocks from initial setup
+                    scan_done = True
             else:
                 shared_state["connected"] = False
                 shared_state["error"] = f"Retry {reconnect_delay:.0f}s"
@@ -2091,12 +2166,22 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0
 
 def _load_profiles_from_dir(profile_dir: str
                             ) -> List[Tuple[str, 'MachineProfile']]:
-    """Fallback: load all profiles with real IPs from directory."""
+    """Fallback: load all profiles with real IPs from directory.
+
+    Skips auto-discovered profiles with no register map (likely gateways).
+    """
     profiles = []
     for f in sorted(Path(profile_dir).glob("*.yaml")):
         try:
             p = MachineProfile.from_yaml(str(f))
             if p.plc_ip and p.plc_ip != "127.0.0.1":
+                # Skip auto-discovered profiles with no useful reg_map
+                if (p.name.startswith("auto_") and
+                        p.customer == "auto_discovered" and
+                        len(p.reg_map) == 0):
+                    print(f"  Skipping {f.name} "
+                          f"(auto-discovered, no reg_map)")
+                    continue
                 profiles.append((str(f), p))
         except Exception as e:
             print(f"  WARNING: Skipping {f.name}: {e}")
