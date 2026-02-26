@@ -2327,13 +2327,18 @@ def _probe_known_ips(subnet: str, port: int = 502,
     When the full subnet scan finds nothing (VPN warm-up, firewall, etc.),
     try connecting directly to IPs where PLCs are commonly found.
     Uses longer timeout since VPN might be slow to establish routes.
+
+    Args:
+        subnet: The /24 subnet prefix WITHOUT trailing dot, e.g. "129.168.1"
     """
-    # Common PLC IPs on eWon LANs (from Steve's fleet experience)
-    common_ips = ['.25', '.1', '.2', '.10', '.20', '.100', '.19']
+    # Common last-octet values for PLCs on eWon LANs
+    common_last_octets = [25, 1, 2, 10, 20, 100, 19, 30, 50]
     hosts = []
+    # Strip any trailing dot from subnet
+    subnet = subnet.rstrip('.')
     print(f"  Probing common PLC IPs on {subnet}.x ...")
-    for suffix in common_ips:
-        ip = f"{subnet}{suffix}"
+    for last in common_last_octets:
+        ip = f"{subnet}.{last}"
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)
@@ -2451,14 +2456,45 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
     # Fallback: if scan found nothing, probe common PLC IPs directly
     if not modbus_hosts:
         print(f"  Full scan found nothing — trying common PLC IPs...")
-        modbus_hosts = _probe_known_ips(f"{subnet_base}.", timeout=3.0)
+        modbus_hosts = _probe_known_ips(subnet_base, timeout=3.0)
 
     if not modbus_hosts:
+        # Diagnostic: try ICMP ping to check if VPN routing works at all
+        print(f"\n  No Modbus (TCP 502) devices found. Running ping test...")
+        import subprocess as _sp
+        for test_ip in [f"{subnet_base}.25", f"{subnet_base}.19",
+                        f"{subnet_base}.1"]:
+            try:
+                r = _sp.run(['ping', '-n', '1', '-w', '3000', test_ip],
+                            capture_output=True, text=True, timeout=5)
+                reachable = (r.returncode == 0)
+                print(f"    ping {test_ip}: "
+                      f"{'REACHABLE' if reachable else 'no response'}")
+                if reachable and not modbus_hosts:
+                    # Host is pingable but Modbus port closed — try connect
+                    print(f"    (host reachable but Modbus port 502 not open)")
+            except Exception:
+                print(f"    ping {test_ip}: failed")
+
+        # Also try the VPN gateways from route table
+        for test_gw in [gw]:
+            if not test_gw.endswith('.0'):
+                try:
+                    r = _sp.run(['ping', '-n', '1', '-w', '3000', test_gw],
+                                capture_output=True, text=True, timeout=5)
+                    reachable = (r.returncode == 0)
+                    print(f"    ping {test_gw} (gateway): "
+                          f"{'REACHABLE' if reachable else 'no response'}")
+                except Exception:
+                    pass
+
         print(f"\n  No Modbus devices reachable on {subnet_base}.x")
         print(f"  Possible causes:")
         print(f"    - eWon VPN still connecting (wait a few seconds, retry)")
         print(f"    - Firewall blocking Python outbound connections")
         print(f"    - PLC on a different subnet")
+        print(f"  VPN route gateways: check if 10.171.153.241 or "
+              f"10.186.132.243 are reachable")
         return []
 
     print(f"  Found {len(modbus_hosts)} Modbus device(s)")
