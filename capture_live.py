@@ -39,6 +39,10 @@ from typing import Dict, List, Optional, Tuple
 
 from config import MachineProfile, DEFAULT_REG_MAP
 
+# Late imports for auto-discovery (only used in --multi mode)
+# These are imported inside functions to avoid breaking --host mode
+# if fleet_manager.py or discover_machine.py are missing.
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Register Map — GE CPE305 / Section 5.1.1
@@ -1693,6 +1697,80 @@ def build_dataset(args):
 # Multi-Rig Concurrent Capture
 # ═══════════════════════════════════════════════════════════════════
 
+def _quick_register_scan(client: 'ModbusTCPClient',
+                         scan_ranges: List[Tuple[int, int]] = None
+                         ) -> Dict[int, int]:
+    """Quick scan to find all non-zero registers. Returns {addr: value}.
+
+    Scans key GE CPE305 ranges in ~15-20 seconds at eWon latency.
+    """
+    if scan_ranges is None:
+        # Common GE CPE305 register ranges
+        scan_ranges = [
+            (1, 500),       # System/config registers
+            (1000, 2000),   # Extended I/O
+            (2000, 2200),   # Encoders, counters
+            (3400, 3500),   # RTC, diagnostics
+            (6000, 6100),   # Shop unit layout (R6000-6030)
+        ]
+    result = {}
+    for start, end in scan_ranges:
+        addr = start
+        while addr < end:
+            count = min(100, end - addr)
+            regs = client.read_holding_registers(addr, count)
+            if regs:
+                for i, val in enumerate(regs):
+                    if val != 0:
+                        result[addr + i] = val
+            addr += count
+    return result
+
+
+def _build_adaptive_blocks(nonzero_regs: Dict[int, int],
+                           reg_map: Dict = None) -> List[Tuple[int, int]]:
+    """Build optimal block reads from discovered non-zero registers.
+
+    Clusters nearby registers into blocks with padding, splits >125.
+    """
+    all_addrs = set(nonzero_regs.keys())
+    if reg_map:
+        for info in reg_map.values():
+            all_addrs.add(info["addr"])
+            if info["type"] in ("FLOAT32", "INT32", "UINT32"):
+                all_addrs.add(info["addr"] + 1)
+
+    if not all_addrs:
+        return [(0, 10)]  # Fallback
+
+    sorted_addrs = sorted(all_addrs)
+    # Cluster: split when gap > 30 registers
+    clusters = [[sorted_addrs[0]]]
+    for a in sorted_addrs[1:]:
+        if a - clusters[-1][-1] > 30:
+            clusters.append([a])
+        else:
+            clusters[-1].append(a)
+
+    # Pad each cluster: 3 before, 5 after
+    blocks = []
+    for cluster in clusters:
+        pad_start = max(0, min(cluster) - 3)
+        pad_end = max(cluster) + 5
+        blocks.append((pad_start, pad_end - pad_start))
+
+    # Split blocks > 125 (Modbus FC03 limit)
+    final = []
+    for bs, bc in blocks:
+        while bc > 125:
+            final.append((bs, 125))
+            bs += 125
+            bc -= 125
+        if bc > 0:
+            final.append((bs, bc))
+    return final
+
+
 def _rig_worker(profile_path: str, profile: 'MachineProfile',
                 shared_state: dict, running_flag: list,
                 args) -> None:
@@ -1703,34 +1781,9 @@ def _rig_worker(profile_path: str, profile: 'MachineProfile',
     mapped_fields = set(reg_map.keys())
     smart_mode = args.smart
 
-    # Block reads with smart mode expansion
+    # Initial block reads from profile (will be replaced by adaptive scan)
     block_reads = compute_block_reads(reg_map)
-    all_addrs = [info["addr"] for info in reg_map.values()]
-
-    if smart_mode:
-        sorted_addrs = sorted(all_addrs)
-        clusters = [[sorted_addrs[0]]]
-        for a in sorted_addrs[1:]:
-            if a - clusters[-1][-1] > 50:
-                clusters.append([a])
-            else:
-                clusters[-1].append(a)
-        padded_blocks = []
-        for cluster in clusters:
-            pad_start = max(0, min(cluster) - 3)
-            pad_end = max(cluster) + 12
-            for info in reg_map.values():
-                if info["addr"] in cluster and info["type"] in ("FLOAT32", "INT32", "UINT32"):
-                    pad_end = max(pad_end, info["addr"] + 2 + 10)
-            padded_blocks.append((pad_start, pad_end - pad_start))
-        final_blocks = []
-        for bs, bc in padded_blocks:
-            while bc > 125:
-                final_blocks.append((bs, 125))
-                bs += 125
-                bc -= 125
-            final_blocks.append((bs, bc))
-        block_reads = final_blocks
+    scan_done = False
 
     # Client, engine, writer — all per-rig
     client = ModbusTCPClient(profile.plc_ip, profile.plc_port or 502,
@@ -1756,6 +1809,18 @@ def _rig_worker(profile_path: str, profile: 'MachineProfile',
                 shared_state["connected"] = True
                 shared_state["error"] = None
                 reconnect_delay = 1.0
+
+                # Adaptive scan on first connect: discover ALL registers
+                if not scan_done and smart_mode:
+                    shared_state["error"] = "Scanning..."
+                    try:
+                        nonzero = _quick_register_scan(client)
+                        if nonzero:
+                            block_reads = _build_adaptive_blocks(nonzero, reg_map)
+                            shared_state["scan_regs"] = len(nonzero)
+                        scan_done = True
+                    except Exception:
+                        scan_done = True  # Don't retry, use profile blocks
             else:
                 shared_state["connected"] = False
                 shared_state["error"] = f"Retry {reconnect_delay:.0f}s"
@@ -1792,7 +1857,7 @@ def _rig_worker(profile_path: str, profile: 'MachineProfile',
         now_str = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
         values = decode_registers_from_dict(reg_dict, reg_map, word_swap)
 
-        # Raw registers in smart mode
+        # Capture ALL non-zero unmapped registers as raw_RXXX
         if smart_mode:
             decoded_addrs = set()
             for info in reg_map.values():
@@ -1902,8 +1967,10 @@ def display_multi_rigs(rig_states: dict, first_draw: list):
         target = vals.get("target_torque", 0.0)
         raw_count = sum(1 for k in vals if k.startswith("raw_R"))
 
+        scan_regs = state.get("scan_regs", 0)
+        scan_str = f" [{scan_regs}regs]" if scan_regs else ""
         sys.stdout.write(
-            f"\033[K  {name[:25]:25s} | {conn_str:5s} | "
+            f"\033[K  {name[:25]:25s} | {conn_str:5s}{scan_str} | "
             f"{elapsed:7.0f}s {hz:4.1f}Hz | "
             f"Conn #{conn_num} {rows}rows | "
             f"State: {state_str}\n"
@@ -1920,11 +1987,102 @@ def display_multi_rigs(rig_states: dict, first_draw: list):
     sys.stdout.flush()
 
 
-def run_multi_capture(args):
-    """Capture from all rigs with profiles concurrently."""
-    profile_dir = args.profile_dir
+def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0
+                        ) -> List[Tuple[str, 'MachineProfile']]:
+    """Auto-discover all reachable PLCs: VPN detection → subnet scan → identify.
 
-    # Load all profiles with real IPs (skip 127.0.0.1 simulator)
+    Returns list of (profile_path, MachineProfile) for each discovered rig.
+    """
+    try:
+        from fleet_manager import EWonDetector, LANDiscovery, MachineIdentifier
+        from discover_machine import find_unit_id, verify_word_swap
+    except ImportError as e:
+        print(f"  WARNING: Auto-discovery unavailable ({e})")
+        print(f"  Falling back to profile directory scan.")
+        return _load_profiles_from_dir(profile_dir)
+
+    print(f"\n  Phase 1: Detecting eWon VPN tunnel...")
+    detector = EWonDetector()
+    tunnel = detector.detect_active_tunnel()
+
+    if not tunnel:
+        print(f"  No active eWon VPN tunnel detected.")
+        print(f"  Falling back to profile directory scan.")
+        return _load_profiles_from_dir(profile_dir)
+
+    gw = tunnel['gateway_ip']
+    device = tunnel.get('device_name') or 'unknown'
+    latency = tunnel.get('latency_ms') or 0
+    print(f"  VPN tunnel active: gateway={gw} device=\"{device}\" "
+          f"latency={latency:.0f}ms")
+
+    # Phase 2: Scan subnet for Modbus hosts
+    print(f"\n  Phase 2: Scanning LAN for Modbus devices...")
+    lan = LANDiscovery(gw)
+    hosts = lan.discover_hosts(timeout=1.0)
+    modbus_hosts = [h for h in hosts if h.get('has_modbus')]
+
+    if not modbus_hosts:
+        print(f"  No Modbus devices found on subnet.")
+        return _load_profiles_from_dir(profile_dir)
+
+    print(f"\n  Found {len(modbus_hosts)} Modbus device(s)")
+
+    # Phase 3: Match each host to a profile or create a new one
+    print(f"\n  Phase 3: Identifying machines...")
+    identifier = MachineIdentifier(profile_dir)
+    results = []
+
+    for host_info in modbus_hosts:
+        ip = host_info['ip']
+        port = host_info.get('modbus_port', 502)
+
+        # Skip the eWon gateway itself (usually has Modbus but no real data)
+        if ip == gw:
+            print(f"    {ip} — eWon gateway (skipped)")
+            continue
+
+        match_type, profile = identifier.identify({'ip': ip},
+                                                   ewon_name=device)
+
+        if match_type == 'exact_ip' and profile:
+            # Known machine — use existing profile
+            profile_path = str(Path(profile_dir) / f"{profile.name}.yaml")
+            print(f"    {ip} — KNOWN: {profile.name} (loaded profile)")
+            results.append((profile_path, profile))
+        else:
+            # Unknown machine — quick fingerprint and create temp profile
+            print(f"    {ip} — NEW machine, creating profile...")
+            try:
+                uid = find_unit_id(ip, port, timeout)
+                ws = verify_word_swap(ip, port, uid, timeout)
+                # Create minimal profile
+                rig_name = f"auto_{ip.replace('.', '_')}"
+                new_profile = MachineProfile(
+                    name=rig_name,
+                    plc_ip=ip,
+                    plc_port=port,
+                    unit_id=uid,
+                    word_swap=ws,
+                    equipment_type="unknown",
+                    customer="auto_discovered",
+                    ewon_name=device,
+                )
+                # Save to profiles/ for future use
+                out_path = Path(profile_dir) / f"{rig_name}.yaml"
+                new_profile.to_yaml(str(out_path))
+                print(f"    {ip} — Created: {out_path.name} "
+                      f"(uid={uid}, ws={ws})")
+                results.append((str(out_path), new_profile))
+            except Exception as e:
+                print(f"    {ip} — Failed to onboard: {e}")
+
+    return results
+
+
+def _load_profiles_from_dir(profile_dir: str
+                            ) -> List[Tuple[str, 'MachineProfile']]:
+    """Fallback: load all profiles with real IPs from directory."""
     profiles = []
     for f in sorted(Path(profile_dir).glob("*.yaml")):
         try:
@@ -1933,26 +2091,38 @@ def run_multi_capture(args):
                 profiles.append((str(f), p))
         except Exception as e:
             print(f"  WARNING: Skipping {f.name}: {e}")
+    return profiles
+
+
+def run_multi_capture(args):
+    """Auto-discover and capture from all reachable PLCs concurrently.
+
+    Pipeline: Detect VPN → Scan subnet → Identify PLCs → Capture all.
+    Falls back to loading profiles from directory if discovery unavailable.
+    """
+    profile_dir = args.profile_dir
+
+    print("\n" + "=" * 60)
+    print("  PLC Live Data Capture — Auto Multi-Rig")
+    print("=" * 60)
+
+    # Auto-discover or load profiles
+    profiles = _auto_discover_rigs(profile_dir, timeout=args.timeout)
 
     if not profiles:
-        print(f"\n  No profiles with real PLC IPs found in {profile_dir}/")
-        print(f"  (Profiles pointing to 127.0.0.1 are skipped)")
+        print(f"\n  No reachable PLCs found. Check VPN connection.")
         return
 
-    print(f"\n" + "=" * 60)
-    print(f"  PLC Live Data Capture — Multi-Rig Mode")
-    print(f"=" * 60)
     mode_str = "SMART" if args.smart else "STANDARD"
-    print(f"  Mode:       {mode_str}")
+    print(f"\n  Ready to capture {len(profiles)} rig(s) [{mode_str}]")
     print(f"  Target Hz:  {args.hz}")
     print(f"  Output:     {args.output}/")
-    print(f"\n  Rigs ({len(profiles)}):")
     for path, p in profiles:
         print(f"    - {p.name:25s} @ {p.plc_ip}:{p.plc_port or 502}")
     print()
 
     # Shared state dicts and running flag
-    running_flag = [True]  # Mutable list so threads can see changes
+    running_flag = [True]
     rig_states = {}
 
     threads = []
@@ -1960,7 +2130,8 @@ def run_multi_capture(args):
         state = {
             "connected": False, "values": {}, "elapsed": 0.0,
             "hz": 0.0, "conn_num": 0, "rows": 0, "engine": None,
-            "error": "Starting...", "mapped_fields": set()
+            "error": "Starting...", "mapped_fields": set(),
+            "scan_regs": 0,
         }
         rig_states[profile.name] = state
         t = threading.Thread(
@@ -1970,16 +2141,14 @@ def run_multi_capture(args):
         )
         threads.append(t)
 
-    # Start all capture threads
     for t in threads:
         t.start()
 
     # Display loop (main thread)
     first_draw = [True]
     try:
-        time.sleep(1)  # Let threads connect
+        time.sleep(1)
         print("  Capturing... (Ctrl+C to stop)\n")
-        # Pre-fill blank lines for ANSI overwrite
         total_display_lines = len(rig_states) * 3 + 1
         for _ in range(total_display_lines):
             print()
@@ -1990,16 +2159,15 @@ def run_multi_capture(args):
         running_flag[0] = False
         print(f"\n\n  Stopping all captures...")
 
-    # Wait for threads
     for t in threads:
         t.join(timeout=5)
 
-    # Summary
     print(f"\n  Multi-rig capture complete:")
     for name, state in sorted(rig_states.items()):
+        scan_info = f" ({state['scan_regs']} regs)" if state.get('scan_regs') else ""
         print(f"    {name:25s}: {state['rows']:6d} rows, "
               f"{state['elapsed']:.0f}s, "
-              f"{state.get('conn_num', 0)} connections")
+              f"{state.get('conn_num', 0)} conns{scan_info}")
     print(f"    Output: {args.output}/")
 
 
