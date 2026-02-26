@@ -815,11 +815,20 @@ class StateInferenceEngine:
                        turns: float, timestamp: float):
         """Heuristic fault detection from signal patterns."""
         conn_turns = turns - self.total_turns_at_start if self.in_connection else 0
+        conn_time = timestamp - self._conn_start_time if self.in_connection else 0
 
-        # Cross-thread: high torque at very low turns
-        if (self.state == 2 and conn_turns < 2.0 and
+        # Cross-thread: abnormally high torque early in threading.
+        # Guards to prevent false positives:
+        #   1) conn_turns >= 0.5: must see actual turns advancement
+        #      (avoids false alarm when capture starts mid-connection)
+        #   2) conn_turns < 1.5: only flag during early threading
+        #   3) conn_time >= 3.0: wait for enough data to judge
+        #   4) torque > 80% of target at that low turn count
+        if (self.in_connection and self.state in (2, 3, 4) and
+                conn_turns >= 0.5 and conn_turns < 1.5 and
+                conn_time >= 3.0 and
                 self.target_torque_est > 0 and
-                torque > 0.5 * self.target_torque_est):
+                torque > 0.80 * self.target_torque_est):
             self.inferred_fault |= 0x0004  # CROSS_THREAD
 
         # Over-torque: exceeds target by 5%+
