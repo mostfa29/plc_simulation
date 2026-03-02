@@ -67,35 +67,44 @@ _STATE_TO_PHASE[13] = 1  # HANDOFF
 
 
 def compute_d_torque_dt(torque: np.ndarray, dt: float = 0.01, k: int = 2) -> np.ndarray:
-    """Central difference torque rate: (T[i+k] - T[i-k]) / (2k * dt).
+    """Torque rate of change using Savitzky-Golay differentiation.
 
-    Vectorized numpy implementation.
+    Savitzky-Golay filter computes a smooth derivative by fitting a local
+    polynomial, avoiding the 100x noise amplification of finite differences
+    at 100Hz. Falls back to central difference if scipy is unavailable.
 
     Args:
         torque: 1D array of torque values [N].
         dt: Timestep in seconds (default 0.01 = 100Hz).
-        k: Half-window for central difference.
+        k: Half-window for fallback central difference.
 
     Returns:
         1D array [N] of torque rate (ft-lbs/sec).
     """
     n = len(torque)
-    result = np.zeros(n, dtype=np.float32)
+    if n < 5:
+        return np.zeros(n, dtype=np.float32)
 
-    if n <= 2 * k:
+    try:
+        from scipy.signal import savgol_filter
+        # window_length must be odd and >= polyorder+2
+        # 31 samples = 0.31s at 100Hz — smooths noise while preserving real transients
+        win_len = min(31, n if n % 2 == 1 else n - 1)
+        if win_len < 5:
+            win_len = 5
+        result = savgol_filter(torque, window_length=win_len, polyorder=3,
+                               deriv=1, delta=dt).astype(np.float32)
         return result
-
-    # Central difference for interior points
-    denominator = 2.0 * k * dt
-    result[k:n-k] = (torque[2*k:] - torque[:n-2*k]) / denominator
-
-    # Forward difference for leading edge
-    result[:k] = (torque[k:2*k] - torque[:k]) / (k * dt)
-
-    # Backward difference for trailing edge
-    result[n-k:] = (torque[n-k:] - torque[n-2*k:n-k]) / (k * dt)
-
-    return result
+    except ImportError:
+        # Fallback: central difference (noisy but functional)
+        result = np.zeros(n, dtype=np.float32)
+        if n <= 2 * k:
+            return result
+        denominator = 2.0 * k * dt
+        result[k:n-k] = (torque[2*k:] - torque[:n-2*k]) / denominator
+        result[:k] = (torque[k:2*k] - torque[:k]) / (k * dt)
+        result[n-k:] = (torque[n-k:] - torque[n-2*k:n-k]) / (k * dt)
+        return result
 
 
 def compute_d_torque_dturns(torque: np.ndarray, turns: np.ndarray,

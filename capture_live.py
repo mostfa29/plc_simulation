@@ -1139,7 +1139,7 @@ def run_capture(args):
             print(f"  Auto-detected profile: {auto_profile.name} "
                   f"(matched IP {args.host})")
 
-    if reg_map is None:
+    if not reg_map:
         reg_map = DEFAULT_REGISTER_MAP
         print(f"  Using default R6000 register map")
 
@@ -3090,7 +3090,26 @@ Examples:
     print(f"  Mode:     {mode_str}")
 
     if args.discover:
-        client = ModbusTCPClient(args.host, args.port, timeout=args.timeout)
+        # Auto-detect working unit ID (eWon gateways vary: 0-5)
+        working_uid = None
+        print(f"\n  Scanning unit IDs 0-5...")
+        for uid in range(6):
+            client = ModbusTCPClient(args.host, args.port,
+                                     timeout=args.timeout, unit_id=uid)
+            if client.connect():
+                regs = client.read_holding_registers(0, 1)
+                if regs is not None:
+                    print(f"  Unit ID {uid}: OK")
+                    working_uid = uid
+                    client.close()
+                    break
+                client.close()
+        if working_uid is None:
+            print("\n  ERROR: No working unit ID found (tried 0-5).")
+            print("  Check eWon Modbus gateway config and PLC slave address.")
+            sys.exit(1)
+        client = ModbusTCPClient(args.host, args.port,
+                                 timeout=args.timeout, unit_id=working_uid)
         if not client.connect():
             print("\n  ERROR: Could not connect. Check host/port and VPN.")
             sys.exit(1)

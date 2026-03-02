@@ -22,7 +22,7 @@ import yaml
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.optim import AdamW
+from torch.optim import Adam, AdamW
 
 from tqdm import tqdm
 
@@ -104,8 +104,12 @@ def train_single_model(model, train_dataset, val_dataset, config, device,
         shuffle=False, num_workers=num_workers, pin_memory=pin_mem,
     )
 
-    # Optimizer
-    optimizer = AdamW(model.parameters(), lr=tc['lr'], weight_decay=tc['weight_decay'])
+    # Optimizer: Adam (no weight decay) or AdamW (with weight decay)
+    opt_name = tc.get('optimizer', 'AdamW')
+    if opt_name == 'Adam':
+        optimizer = Adam(model.parameters(), lr=tc['lr'])
+    else:
+        optimizer = AdamW(model.parameters(), lr=tc['lr'], weight_decay=tc['weight_decay'])
 
     # Loss: CE with class weights (default) or Focal
     loss_type = lc.get('type', 'CrossEntropyLoss')
@@ -308,13 +312,15 @@ def main():
     if not Path(dataset_dir).is_absolute():
         dataset_dir = str(Path(__file__).parent / dataset_dir)
 
+    channels_mode = config['data'].get('channels_mode', 'all')
     train_dataset, val_dataset, test_dataset, norm_params = prepare_datasets(
         dataset_dir=dataset_dir, class_map=config['class_map'],
         window_size=config['data']['window_size'],
         stride=config['data']['window_stride'],
         split_ratio=tuple(config['data']['split_ratio']),
         split_seed=config['data'].get('split_seed', 42),
-        norm_params_path=str(checkpoints_dir / 'norm_params.json'))
+        norm_params_path=str(checkpoints_dir / 'norm_params.json'),
+        channels_mode=channels_mode)
 
     with open(output_dir / 'config.yaml', 'w') as f:
         yaml.dump(config, f, default_flow_style=False)

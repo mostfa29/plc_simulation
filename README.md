@@ -138,6 +138,46 @@ The manifest now uses **ground truth labels** based on what actually happened in
 | 7 | misaligned_stab | CRIT |
 | 8 | stall | CRIT |
 
+## Fleet Catalog & Equipment Types
+
+The system tracks all ~130 eWon devices across the fleet in `fleet_catalog.yaml`, classified by equipment type with equipment-specific physics parameters.
+
+### Equipment Types
+
+| Type | HP | Gear Ratio | Max Torque | Max RPM | PLC |
+|------|-----|-----------|------------|---------|-----|
+| HXI | 800 | 10.5:1 | 37,500 ft-lbs | 228 | CPE305 |
+| HXI HT | 800 | 14.0:1 | 50,000 ft-lbs | 170 | CPE305 |
+| HXI Smart Slide | 800 | 10.5:1 | 37,500 ft-lbs | 228 | CPE305 |
+| EXI | 800 | 11.0:1 | 40,000 ft-lbs | 210 | CPE305 |
+| FDS | 800 | 10.5:1 | 37,500 ft-lbs | 228 | CompactLogix |
+| Rostel | 750 | 10.0:1 | 35,000 ft-lbs | 240 | Rx3i |
+| Warrior | 600 | 9.0:1 | 25,000 ft-lbs | 260 | CPE305 |
+| Smart Drive | 900 | 10.5:1 | 42,000 ft-lbs | 220 | CPE305 |
+| EMI | 400 | 8.0:1 | 18,000 ft-lbs | 300 | CPE305 |
+
+### Fleet Distribution (Training Data Weighting)
+
+Synthetic data is weighted proportionally to real fleet composition:
+
+```
+HXI              19 (22%)    HXI Smart Slide  16 (18%)
+Rostel           15 (17%)    HXI HT            9 (10%)
+Warrior           8 ( 9%)    EXI                7 ( 8%)
+FDS               6 ( 7%)    Smart Drive        3 ( 3%)
+ECI               2 ( 2%)    EMI                2 ( 2%)
+```
+
+```bash
+# View fleet catalog summary and training weights
+python fleet_manager.py --fleet-catalog
+
+# Apply equipment-specific physics to simulation
+from config import SimConfig, EquipmentType
+cfg = SimConfig()
+cfg.apply_equipment_spec(EquipmentType.HXI_HT)  # 14:1 gear, 50k torque
+```
+
 ## Per-Machine Profiles
 
 Each of Steve's rigs has a different PLC program with process data at different register addresses. The `MachineProfile` system handles this:
@@ -145,7 +185,7 @@ Each of Steve's rigs has a different PLC program with process data at different 
 ```
 profiles/
 ├── shop_unit.yaml           # Baseline (confirmed R6000 layout)
-└── precision_rig_709.yaml   # First field machine (TBD addresses)
+└── precision_rig_709.yaml   # First field machine (confirmed R160+ layout)
 ```
 
 ### Creating a Profile
@@ -225,24 +265,29 @@ profile = profiler.analyze()
 Connects to PLC via eWon VPN with support for per-machine profiles:
 
 ```bash
+# Smart multi-rig capture (RECOMMENDED): auto-detects VPN, finds PLCs, captures
+python capture_live.py --multi --smart
+
+# Smart capture with rig name override (when eWon name can't be auto-detected)
+python capture_live.py --host 129.168.1.25 --smart --rig "Panther Rig 2"
+
+# Discovery mode: scan registers 0-200, auto-detect unit ID
+python capture_live.py --host 129.168.1.25 --discover
+
 # Auto-detect profile from IP address (checks profiles/ directory)
 python capture_live.py --host 129.168.1.25
 
-# Explicit profile
-python capture_live.py --host 129.168.1.25 --profile profiles/precision_rig_709.yaml
-
-# Capture with connection segmentation
-python capture_live.py --host 129.168.1.25 --hz 20 --segment-mode segmented
-
-# Discovery mode
-python capture_live.py --host 129.168.1.25 --discover
+# Build training dataset from captured connections
+python capture_live.py --build-dataset --input ./live_captures --rig-name "Panther Rig 2"
 ```
 
 Key features:
+- **Smart mode**: Infers connection state, auto-segments each connection, writes JSON metadata, idle decimation
+- **Multi-rig**: Auto-detects eWon VPN tunnel, scans LAN for PLCs, identifies rigs from fleet catalog
+- **Unit ID auto-scan**: Tries unit IDs 0-5 to find the working one (eWon gateways vary)
 - **MachineProfile support**: Auto-detects by IP or loads from YAML
 - **Non-contiguous register maps**: Multiple block reads for scattered registers
-- **Block reads**: Efficient over VPN latency (single Modbus request per block)
-- **Connection segmentation**: Detects makeup boundaries from RPM/torque/state
+- **Fleet catalog integration**: Matches eWon name to fleet catalog for equipment type identification
 - **Auto-reconnect**: Exponential backoff on VPN drops
 
 ### detect_live.py — InceptionTime Fault Detection
@@ -331,32 +376,94 @@ python fleet_manager.py --detect-tunnel
 ### Deployment Sequence
 
 1. Steve connects eWon to active rig
-2. Run `fleet_manager.py --scan-now` to auto-detect, identify, and test
+2. Run `capture_live.py --multi --smart` to auto-detect VPN, find PLCs, capture
 3. If new machine: `fleet_manager.py --onboard --host <ip>` (Steve confirms registers)
-4. Run `capture_live.py --host <ip>` to record threading cycles
-5. Run `generate_dataset.py --verify-labels` to check label distribution
-6. Generate synthetic data with `generate_dataset.py --class-balance rebalanced`
-7. Train InceptionTime ensemble on Colab
-8. Run `detect_live.py tstr` to validate sim-to-real transfer
-9. Go live with `detect_live.py live`
-10. Run `fleet_manager.py --daemon` for continuous monitoring
+4. Run `capture_live.py --build-dataset` to build training data from captures
+5. Generate synthetic data with `generate_dataset.py --class-balance rebalanced`
+6. Train InceptionTime ensemble (Colab/RunPod)
+7. Run `detect_live.py tstr` to validate sim-to-real transfer
+8. Go live with `detect_live.py live`
+
+## Phase 1 Training
+
+### Architecture
+
+InceptionTime ensemble (5 members), 9-class fault classification from 100Hz PLC time-series data.
+
+### Triage Config (Current — Fixing F1=0.17)
+
+Analysis identified three compounding failures in the original training:
+
+1. **Regularization catastrophe**: FocalLoss + label smoothing + mixup + BalancedBatchSampler created contradictory training signals (FocalLoss demands confidence; label smoothing punishes it)
+2. **Derived channel noise**: `d_torque_dt` via finite differences amplified noise 100x at 100Hz; `torque_norm` destroyed magnitude info separating over_torque from normal
+3. **Insufficient inter-class signal**: Physically similar faults (galling/stripped/over_torque) overlap in raw feature space
+
+**Triage config** (`config_triage.yaml`) strips everything to bare metal:
+- Plain `CrossEntropyLoss` (no focal, no label smoothing)
+- `Adam` optimizer (no weight decay)
+- No mixup augmentation
+- Raw 6 channels only (no derived)
+- Savitzky-Golay differentiation (replaces noisy finite differences for later use)
+
+```bash
+cd phase1_pretraining
+
+# Run diagnostics FIRST (5 minutes total)
+pip install aeon scikit-learn
+python diagnostics/minirocket_baseline.py --config config_triage.yaml
+python diagnostics/fisher_discriminant.py --config config_triage.yaml
+
+# Train with triage config
+python train.py --config config_triage.yaml --output-dir ./results_triage
+```
+
+### Diagnostic Tools
+
+| Tool | Time | Purpose |
+|------|------|---------|
+| `diagnostics/minirocket_baseline.py` | 5 min | If MiniRocket F1 ~ 0.17: data problem. If > 0.50: training was the bottleneck. |
+| `diagnostics/fisher_discriminant.py` | 2 min | Shows which class pairs are inseparable and which channels discriminate best |
+
+### Training Configs
+
+| Config | Loss | Channels | Mixup | Smoothing | Purpose |
+|--------|------|----------|-------|-----------|---------|
+| `config_triage.yaml` | CE | 6 (raw) | No | No | **USE THIS** — stripped baseline |
+| `config.yaml` | Focal | 12 (all) | 0.3 | 0.10 | Original (F1=0.17, broken) |
+| `config_local_test.yaml` | Focal | 12 (all) | 0.3 | 0.10 | Local GTX 1650 test variant |
 
 ## Module Structure
 
-| File | Purpose | Key Addition |
-|------|---------|-------------|
-| `config.py` | Constants, pipe catalogs, machine specs, domain randomization | `MachineProfile`, `RegisterDef` |
-| `physics_engine.py` | Drive models, torque-turn, PID, thermal, shoulder detection | `PhysicsCalibrator` |
-| `sensor_models.py` | Machine-type-specific noise corruption pipeline | `NoiseProfiler` |
-| `scenario.py` | Scenario generation, fault injection, distribution weights | |
-| `runner.py` | Orchestrator: physics + sensors + Modbus + CSV output | |
-| `modbus_server.py` | Zero-dependency Modbus TCP server (FC03/FC06/FC16) | Dynamic register maps |
-| `generate_dataset.py` | CLI with ground truth labeling and label verification | `compute_ground_truth_label`, `--verify-labels` |
-| `capture_live.py` | Live Modbus TCP data recorder via eWon VPN | MachineProfile support, multi-block reads |
-| `detect_live.py` | Real-time InceptionTime ensemble fault detection | TSTR validation, `verify-labels` |
-| `discover_machine.py` | Smart register scanner & profile generator | NEW |
-| `connection_manager.py` | Multi-machine connection orchestration | NEW |
-| `fleet_manager.py` | eWon auto-detection, fleet discovery, smart testing | NEW |
+| File | Purpose |
+|------|---------|
+| `config.py` | Constants, pipe catalogs, machine specs, `EquipmentType`, `EquipmentSpec`, `MachineProfile` |
+| `physics_engine.py` | Drive models, torque-turn, PID, thermal, shoulder detection, `PhysicsCalibrator` |
+| `sensor_models.py` | Machine-type-specific noise corruption pipeline, `NoiseProfiler` |
+| `scenario.py` | Scenario generation, fault injection, distribution weights |
+| `runner.py` | Orchestrator: physics + sensors + Modbus + CSV output |
+| `modbus_server.py` | Zero-dependency Modbus TCP server (FC03/FC06/FC16) |
+| `generate_dataset.py` | CLI with ground truth labeling and label verification |
+| `capture_live.py` | Live Modbus capture: smart mode, multi-rig, auto unit ID scan |
+| `detect_live.py` | Real-time InceptionTime ensemble fault detection, TSTR validation |
+| `discover_machine.py` | Smart register scanner & profile generator |
+| `connection_manager.py` | Multi-machine connection orchestration |
+| `fleet_manager.py` | Fleet orchestrator: VPN detection, discovery, `FleetCatalog`, smart testing |
+| `fleet_catalog.yaml` | All ~130 eWon devices classified by equipment type |
+
+### Phase 1 Training (`phase1_pretraining/`)
+
+| File | Purpose |
+|------|---------|
+| `train.py` | Training loop: warmup + cosine LR, Adam/AdamW, early stopping |
+| `dataset.py` | Data pipeline: manifest, splits, windowing, normalization, `channels_mode` |
+| `features.py` | Derived channels: Savitzky-Golay d_torque_dt, torque-turn slope, phase |
+| `models.py` | InceptionTime ensemble, ResNet baseline |
+| `losses.py` | FocalLoss, MixupFocalLoss, mixup augmentation |
+| `sampler.py` | BalancedBatchSampler (7 per class per batch) |
+| `config_triage.yaml` | **Stripped baseline** — CE loss, raw 6ch, no regularization stack |
+| `config.yaml` | Original config (broken — regularization catastrophe) |
+| `diagnostics/minirocket_baseline.py` | MiniRocket diagnostic: data vs training problem |
+| `diagnostics/fisher_discriminant.py` | Fisher Discriminant Ratio: inter-class separability |
 
 ## Scenario Distribution (Section 6.2)
 

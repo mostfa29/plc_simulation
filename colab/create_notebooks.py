@@ -339,6 +339,7 @@ DRIVE_RESULTS_DIR = '/content/drive/MyDrive/topdrive_ai/results'
 LOCAL_RESULTS_DIR = '/content/results'
 
 # ── Training settings ──────────────────────────────────────────────────────
+CONFIG_FILE   = 'config_triage.yaml'  # 'config_triage.yaml' (RECOMMENDED) or 'config.yaml' (old)
 ARCHITECTURE  = 'InceptionTime'   # 'InceptionTime' or 'ResNet'
 MAX_EPOCHS    = 100
 BATCH_SIZE    = 64
@@ -385,10 +386,14 @@ for fname, fpath in ml_modules:
     train_cells.append(md_cell(f"### `{fname}`"))
     train_cells.append(writefile_cell(fname, fpath))
 
-# Write config.yaml
+# Write config.yaml (original) and config_triage.yaml (stripped regularization)
 config_yaml_content = (PHASE1 / "config.yaml").read_text(encoding="utf-8")
 train_cells.append(md_cell("### `config.yaml`"))
 train_cells.append(code_cell(f"%%writefile config.yaml\n" + config_yaml_content))
+
+config_triage_content = (PHASE1 / "config_triage.yaml").read_text(encoding="utf-8")
+train_cells.append(md_cell("### `config_triage.yaml` (Phase 1 Triage: stripped regularization, raw 6ch)"))
+train_cells.append(code_cell(f"%%writefile config_triage.yaml\n" + config_triage_content))
 
 # Verify
 train_cells.append(code_cell("""\
@@ -419,7 +424,8 @@ import yaml
 from pathlib import Path
 
 # Load config
-with open('config.yaml') as f:
+print(f"Using config: {CONFIG_FILE}")
+with open(CONFIG_FILE) as f:
     config = yaml.safe_load(f)
 
 # Override data dir to point at Drive
@@ -446,7 +452,8 @@ from dataset import prepare_datasets
 checkpoints_dir = os.path.join(LOCAL_RESULTS_DIR, 'checkpoints')
 os.makedirs(checkpoints_dir, exist_ok=True)
 
-print("Loading and windowing dataset...")
+channels_mode = config['data'].get('channels_mode', 'all')
+print(f"Loading and windowing dataset (channels: {channels_mode})...")
 train_dataset, val_dataset, test_dataset, norm_params = prepare_datasets(
     dataset_dir=DRIVE_DATA_DIR,
     class_map=config['class_map'],
@@ -455,6 +462,7 @@ train_dataset, val_dataset, test_dataset, norm_params = prepare_datasets(
     split_ratio=tuple(config['data']['split_ratio']),
     split_seed=config['data'].get('split_seed', 42),
     norm_params_path=os.path.join(checkpoints_dir, 'norm_params.json'),
+    channels_mode=channels_mode,
 )
 
 print(f"\\nDataset sizes:")

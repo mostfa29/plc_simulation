@@ -26,6 +26,12 @@ from features import (
     CH_MASK,
 )
 
+# Channel modes: 'all' = 12 channels (6 raw + 6 derived), 'raw_only' = 6 raw channels
+CHANNEL_MODES = {
+    'all': NUM_TOTAL_CHANNELS,       # 12
+    'raw_only': NUM_RAW_CHANNELS,    # 6
+}
+
 logger = logging.getLogger(__name__)
 
 RAW_COLUMNS = [
@@ -160,30 +166,45 @@ def auto_build_manifest(sensor_dir, class_map):
 # ═══════════════════════════════════════════════════════════════════
 
 def scenario_to_windows(filepath, target_torque, expected_turns,
-                         window_size=2000, stride=1000, dt=0.01):
+                         window_size=2000, stride=1000, dt=0.01,
+                         channels_mode='all'):
     """Load scenario and create sliding windows.
 
+    Args:
+        channels_mode: 'all' = 12 channels (raw + derived),
+                       'raw_only' = 6 raw channels only.
+
     Returns (features, fault_codes):
-      features: [W, window_size, 12] float32
+      features: [W, window_size, num_channels] float32
       fault_codes: [W, window_size] int64 or None
     """
+    num_channels = CHANNEL_MODES.get(channels_mode, NUM_TOTAL_CHANNELS)
+
     try:
         df = pd.read_parquet(filepath) if filepath.suffix == '.parquet' else pd.read_csv(filepath)
     except Exception as e:
         logger.warning(f"Error loading {filepath}: {e}")
-        return np.empty((0, window_size, NUM_TOTAL_CHANNELS), dtype=np.float32), None
+        return np.empty((0, window_size, num_channels), dtype=np.float32), None
 
-    for col in RAW_COLUMNS + [STATE_COLUMN]:
+    for col in RAW_COLUMNS:
         if col not in df.columns:
             logger.warning(f"Missing column {col} in {filepath}")
-            return np.empty((0, window_size, NUM_TOTAL_CHANNELS), dtype=np.float32), None
+            return np.empty((0, window_size, num_channels), dtype=np.float32), None
 
     raw = df[RAW_COLUMNS].values.astype(np.float32)
-    state = df[STATE_COLUMN].values.astype(np.int32)
     has_fc = 'fault_code' in df.columns
     fc_raw = df['fault_code'].values.astype(np.int64) if has_fc else None
 
-    features = compute_derived_channels(raw, state, target_torque, expected_turns, dt=dt)
+    if channels_mode == 'raw_only':
+        features = raw
+    else:
+        state_col = STATE_COLUMN if STATE_COLUMN in df.columns else None
+        if state_col:
+            state = df[state_col].values.astype(np.int32)
+        else:
+            state = np.zeros(len(raw), dtype=np.int32)
+        features = compute_derived_channels(raw, state, target_torque, expected_turns, dt=dt)
+
     n = features.shape[0]
 
     feat_wins, fc_wins = [], []
@@ -195,10 +216,9 @@ def scenario_to_windows(filepath, target_torque, expected_turns,
             if fc_raw is not None:
                 fc_wins.append(fc_raw[start:end])
         else:
-            win = np.zeros((window_size, NUM_TOTAL_CHANNELS), dtype=np.float32)
+            win = np.zeros((window_size, num_channels), dtype=np.float32)
             actual = n - start
             win[:actual] = features[start:n]
-            win[actual:, CH_MASK] = 0.0
             feat_wins.append(win)
             if fc_raw is not None:
                 fc_w = np.zeros(window_size, dtype=np.int64)
@@ -207,10 +227,9 @@ def scenario_to_windows(filepath, target_torque, expected_turns,
         start += stride
 
     if not feat_wins:
-        win = np.zeros((window_size, NUM_TOTAL_CHANNELS), dtype=np.float32)
+        win = np.zeros((window_size, num_channels), dtype=np.float32)
         actual = min(n, window_size)
         win[:actual] = features[:actual]
-        win[actual:, CH_MASK] = 0.0
         feat_wins.append(win)
         if fc_raw is not None:
             fc_w = np.zeros(window_size, dtype=np.int64)
@@ -222,7 +241,7 @@ def scenario_to_windows(filepath, target_torque, expected_turns,
 
 def build_dataset_index(manifest, scenario_ids, sensor_dir, class_map,
                          window_size=2000, stride=1000,
-                         fault_threshold=0.10):
+                         fault_threshold=0.10, channels_mode='all'):
     """Build windowed dataset with PER-WINDOW label assignment.
 
     For fault scenarios, each window is labeled based on whether fault_code
@@ -245,7 +264,8 @@ def build_dataset_index(manifest, scenario_ids, sensor_dir, class_map,
         else:
             sc = class_map.get(row['scenario_type'], 0)
 
-        windows, fc_windows = scenario_to_windows(fp, tt, et, window_size, stride)
+        windows, fc_windows = scenario_to_windows(
+            fp, tt, et, window_size, stride, channels_mode=channels_mode)
         if windows.shape[0] == 0:
             continue
 
@@ -276,7 +296,8 @@ def build_dataset_index(manifest, scenario_ids, sensor_dir, class_map,
 
 
 def compute_norm_params(windows_list):
-    all_data = np.concatenate([w.reshape(-1, NUM_TOTAL_CHANNELS) for w in windows_list], axis=0)
+    num_ch = windows_list[0].shape[-1] if windows_list else NUM_TOTAL_CHANNELS
+    all_data = np.concatenate([w.reshape(-1, num_ch) for w in windows_list], axis=0)
     mean = np.mean(all_data, axis=0).astype(np.float32)
     std = np.std(all_data, axis=0).astype(np.float32)
     std = np.where(std < 1e-8, 1.0, std)
@@ -284,8 +305,11 @@ def compute_norm_params(windows_list):
 
 
 def apply_normalization(windows, norm):
+    num_ch = windows.shape[-1]
     normalized = (windows - norm.mean) / norm.std
-    normalized[:, :, CH_MASK] = windows[:, :, CH_MASK]
+    # Preserve mask channel if using all channels (12-ch mode)
+    if num_ch == NUM_TOTAL_CHANNELS:
+        normalized[:, :, CH_MASK] = windows[:, :, CH_MASK]
     return normalized.astype(np.float32)
 
 
@@ -322,8 +346,15 @@ def create_splits(manifest, class_map, split_ratio=(0.70, 0.15, 0.15), seed=42):
 
 def prepare_datasets(dataset_dir, class_map, window_size=2000, stride=1000,
                       split_ratio=(0.70, 0.15, 0.15), split_seed=42,
-                      norm_params_path=None, fault_threshold=0.10):
-    """Full pipeline: manifest -> split -> window -> normalize -> Dataset."""
+                      norm_params_path=None, fault_threshold=0.10,
+                      channels_mode='all'):
+    """Full pipeline: manifest -> split -> window -> normalize -> Dataset.
+
+    Args:
+        channels_mode: 'all' = 12 channels (raw + derived),
+                       'raw_only' = 6 raw channels only.
+    """
+    num_channels = CHANNEL_MODES.get(channels_mode, NUM_TOTAL_CHANNELS)
     dataset_dir = Path(dataset_dir)
     sensor_dir = dataset_dir / 'sensor'
 
@@ -340,23 +371,28 @@ def prepare_datasets(dataset_dir, class_map, window_size=2000, stride=1000,
     if 'scenario_id' not in manifest.columns:
         manifest['scenario_id'] = range(len(manifest))
 
+    print(f"Channel mode: {channels_mode} ({num_channels} channels)")
+
     train_ids, val_ids, test_ids = create_splits(manifest, class_map, split_ratio, split_seed)
 
     print(f"Building training windows ({len(train_ids)} scenarios)...")
     train_windows, train_labels, _ = build_dataset_index(
-        manifest, train_ids, sensor_dir, class_map, window_size, stride, fault_threshold)
+        manifest, train_ids, sensor_dir, class_map, window_size, stride,
+        fault_threshold, channels_mode=channels_mode)
 
     print(f"Building validation windows ({len(val_ids)} scenarios)...")
     val_windows, val_labels, _ = build_dataset_index(
-        manifest, val_ids, sensor_dir, class_map, window_size, stride, fault_threshold)
+        manifest, val_ids, sensor_dir, class_map, window_size, stride,
+        fault_threshold, channels_mode=channels_mode)
 
     print(f"Building test windows ({len(test_ids)} scenarios)...")
     test_windows, test_labels, _ = build_dataset_index(
-        manifest, test_ids, sensor_dir, class_map, window_size, stride, fault_threshold)
+        manifest, test_ids, sensor_dir, class_map, window_size, stride,
+        fault_threshold, channels_mode=channels_mode)
 
-    train_all = np.concatenate(train_windows) if train_windows else np.empty((0, window_size, NUM_TOTAL_CHANNELS))
-    val_all = np.concatenate(val_windows) if val_windows else np.empty((0, window_size, NUM_TOTAL_CHANNELS))
-    test_all = np.concatenate(test_windows) if test_windows else np.empty((0, window_size, NUM_TOTAL_CHANNELS))
+    train_all = np.concatenate(train_windows) if train_windows else np.empty((0, window_size, num_channels))
+    val_all = np.concatenate(val_windows) if val_windows else np.empty((0, window_size, num_channels))
+    test_all = np.concatenate(test_windows) if test_windows else np.empty((0, window_size, num_channels))
 
     print("Computing normalization from training data...")
     norm = compute_norm_params(train_windows if train_windows else [train_all])
