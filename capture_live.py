@@ -1901,6 +1901,23 @@ def _find_profile_by_ewon(profile_dir: str,
     return None
 
 
+def _find_profile_by_ip(profile_dir: str,
+                         ip: str) -> Optional[Tuple[str, 'MachineProfile']]:
+    """Fallback: find a profile whose plc_ip matches. Returns (path, profile).
+
+    Only returns profiles with a non-empty reg_map (to avoid matching
+    auto-generated stubs that have no register information).
+    """
+    for f in Path(profile_dir).glob("*.yaml"):
+        try:
+            p = MachineProfile.from_yaml(str(f))
+            if p.plc_ip == ip and len(p.reg_map) > 0:
+                return (str(f), p)
+        except Exception:
+            continue
+    return None
+
+
 # ═══════════════════════════════════════════════════════════════════
 # eWon Connection Tracker — logs which devices connect and when
 # ═══════════════════════════════════════════════════════════════════
@@ -2548,8 +2565,11 @@ def _scrape_ewon_name(ewon_ip: str, timeout: float = 4.0) -> str:
                 # Strip "eWon - " or "eWON - " prefix
                 name = re.sub(r'^eWo[nN]\s*[-–:]\s*', '', title,
                               flags=re.IGNORECASE).strip()
-                # Filter out generic titles
-                if name and name.lower() not in ('ewon', 'login', 'home', ''):
+                # Filter out generic titles and JS placeholders
+                _generic = ('ewon', 'login', 'home', '', 'loading',
+                            'loading...', 'please wait', 'connecting',
+                            'flexy', 'cosy', 'ewon flexy', 'ewon cosy')
+                if name and name.lower().rstrip('.') not in _generic:
                     return name
 
             # Fallback: look for device name in page body
@@ -2781,7 +2801,15 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
             continue
 
         if not device_name:
-            # No device name — can't identify, create generic profile
+            # No device name — try IP-based fallback before creating generic
+            ip_match = _find_profile_by_ip(profile_dir, ip)
+            if ip_match:
+                prof_path, prof = ip_match
+                print(f"    {ip} — KNOWN: {prof.name} "
+                      f"(matched by IP, no device name)")
+                results.append((prof_path, prof))
+                continue
+            # Last resort: create generic profile
             print(f"    {ip} — Unknown rig (no device name)")
             prof_path, prof = _create_rig_profile(
                 ip=ip, port=port,
@@ -2812,6 +2840,15 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
                 profile_name=Path(prof_path).name,
                 profile_dir=profile_dir,
             )
+            results.append((prof_path, prof))
+            continue
+
+        # Strategy 1.5: eWon name didn't match — try IP-based fallback
+        ip_match = _find_profile_by_ip(profile_dir, ip)
+        if ip_match:
+            prof_path, prof = ip_match
+            print(f"    {ip} — KNOWN: {prof.name} "
+                  f"(matched by IP, name \"{device_name}\" unmatched)")
             results.append((prof_path, prof))
             continue
 

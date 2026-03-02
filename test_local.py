@@ -145,7 +145,7 @@ def diagnose_data(data_dir, config):
 # ═══════════════════════════════════════════════════════════════════
 
 def train_and_evaluate(config, data_dir, results_dir, train_epochs=50,
-                       resnet_only=False):
+                       resnet_only=False, hierarchical=False):
     """Train model(s) and evaluate on test set."""
     import torch
     import torch.nn as nn
@@ -243,6 +243,26 @@ def train_and_evaluate(config, data_dir, results_dir, train_epochs=50,
 
     if resnet_only:
         return resnet_f1, None
+
+    # ── Hierarchical mode (Session 3) ─────────────────────────────
+    if hierarchical:
+        banner("HIERARCHICAL TWO-STAGE TRAINING", char='-')
+        from hierarchical import HierarchicalClassifier, evaluate_hierarchical
+
+        hier = HierarchicalClassifier(c_in=c_in, nf=nf, device=device)
+        hier.train_stage1(
+            train_dataset.windows, train_dataset.labels,
+            val_dataset.windows, val_dataset.labels,
+            config, checkpoints_dir, logs_dir)
+        hier.train_stage2(
+            train_dataset.windows, train_dataset.labels,
+            val_dataset.windows, val_dataset.labels,
+            config, checkpoints_dir, logs_dir)
+
+        banner("HIERARCHICAL TEST SET EVALUATION")
+        preds = hier.predict_from_numpy(test_dataset.windows)
+        results = evaluate_hierarchical(preds, test_dataset.labels, class_names)
+        return resnet_f1, results['macro_f1']
 
     # ── InceptionTime ─────────────────────────────────────────────
     banner(f"InceptionTime Training ({train_epochs} epochs)", char='-')
@@ -405,6 +425,8 @@ def main():
                         help='Skip data generation (reuse existing)')
     parser.add_argument('--resnet-only', action='store_true',
                         help='Only run ResNet sanity check')
+    parser.add_argument('--hierarchical', action='store_true',
+                        help='Use two-stage hierarchical classifier (Session 3)')
     parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
 
@@ -440,6 +462,7 @@ def main():
         config, data_dir, results_dir,
         train_epochs=args.train_epochs,
         resnet_only=args.resnet_only,
+        hierarchical=args.hierarchical,
     )
 
     total_time = time.perf_counter() - total_start

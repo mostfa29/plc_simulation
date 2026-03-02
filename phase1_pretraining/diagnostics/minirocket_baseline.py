@@ -141,6 +141,7 @@ def run_minirocket(config_path: str):
     print("  Per-class F1 comparison:")
     print(f"  {'Class':<20s} {'MiniRocket':>10s}  {'InceptionTime (old)':>18s}")
     print(f"  {'-'*50}")
+    # Old baseline F1s from the 12-channel pipeline with FocalLoss
     old_f1s = [0.6045, 0.3539, 0.0646, 0.1692, 0.1581, 0.0332, 0.0618, 0.0052, 0.0519]
     for i, name in enumerate(class_names):
         per_cls = f1_score(y_test == i, y_pred_test == i)

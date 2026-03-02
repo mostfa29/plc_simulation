@@ -86,9 +86,14 @@ def run_fdr_analysis(config_path: str):
     if channels_mode == 'raw_only':
         channel_names = ['torque', 'rpm', 'pressure', 'oil_temp', 'turns', 'hookload']
     else:
-        channel_names = ['torque', 'rpm', 'pressure', 'oil_temp', 'turns', 'hookload',
-                         'd_torque_dt', 'd_torque_dturns', 'torque_norm', 'turns_norm',
-                         'phase', 'mask']
+        channel_names = [
+            'torque', 'rpm', 'pressure', 'oil_temp', 'turns', 'hookload',
+            'd_torque_dt', 'd_torque_dturns',
+            'torque_trend_q4', 'rpm_collapse', 'torque_osc',
+            'torque_rpm_ratio', 'mech_power',
+            'phase_idle', 'phase_stab', 'phase_spin_in',
+            'phase_shoulder', 'phase_power_tight', 'phase_hold',
+        ]
 
     print("=" * 70)
     print("  Fisher Discriminant Ratio Analysis")
@@ -202,10 +207,77 @@ def run_fdr_analysis(config_path: str):
 
     print("=" * 70)
 
+    # 5. Silhouette score
+    try:
+        from sklearn.metrics import silhouette_score, silhouette_samples
+        from sklearn.decomposition import PCA
+
+        n_samples = windows.shape[0]
+        X_flat = windows.reshape(n_samples, -1)
+        n_components = min(50, X_flat.shape[1], n_samples - 1)
+        pca = PCA(n_components=n_components, random_state=42)
+        X_pca = pca.fit_transform(X_flat)
+
+        print(f"\n{'='*70}")
+        print(f"  Silhouette Score (PCA: {pca.explained_variance_ratio_.sum():.1%} var in {n_components} dims)")
+        print(f"{'='*70}")
+
+        sample_size = min(5000, n_samples)
+        sil = silhouette_score(X_pca, labels, sample_size=sample_size, random_state=42)
+        print(f"  Overall: {sil:.4f}")
+
+        sil_samples = silhouette_samples(X_pca, labels)
+        for cls_idx, cls_name in enumerate(class_names):
+            mask = labels == cls_idx
+            if mask.sum() > 0:
+                cls_sil = sil_samples[mask].mean()
+                tag = "OK" if cls_sil > 0.25 else "WEAK" if cls_sil > 0 else "POOR"
+                print(f"    [{tag:>4s}] {cls_name:<20s}: {cls_sil:.4f} (n={mask.sum()})")
+    except ImportError:
+        print("\n  scikit-learn not available — skipping silhouette analysis")
+
+    # 6. Class mean profile plots
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        key_channels = list(range(min(len(channel_names), 13)))
+        n_plots = len(key_channels)
+        fig, axes = plt.subplots(n_plots, 1, figsize=(14, 3 * n_plots))
+        if n_plots == 1:
+            axes = [axes]
+        colors = plt.cm.tab10(np.linspace(0, 1, len(class_names)))
+
+        for ax_idx, ch in enumerate(key_channels):
+            ax = axes[ax_idx]
+            for cls_idx, cls_name in enumerate(class_names):
+                mask = labels == cls_idx
+                if mask.sum() < 5:
+                    continue
+                cls_data = windows[mask, :, ch]
+                mean = cls_data.mean(axis=0)
+                std = cls_data.std(axis=0)
+                ax.plot(mean, color=colors[cls_idx], label=cls_name, alpha=0.8)
+                ax.fill_between(range(len(mean)), mean - std, mean + std,
+                                color=colors[cls_idx], alpha=0.15)
+            ax.set_title(f"Channel: {channel_names[ch]}")
+            ax.legend(fontsize=7, loc='upper right')
+        plt.tight_layout()
+        plt.savefig('class_mean_profiles.png', dpi=150)
+        plt.close()
+        print(f"\n  Class mean profiles saved to class_mean_profiles.png")
+    except ImportError:
+        print("\n  matplotlib not available — skipping class mean plots")
+
+    print(f"\n{'='*70}")
+    print(f"  Full diagnostics complete.")
+    print(f"{'='*70}")
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Fisher Discriminant Ratio Analysis')
-    parser.add_argument('--config', default='config_triage.yaml',
-                        help='Config YAML (default: config_triage.yaml)')
+    parser.add_argument('--config', default='config.yaml',
+                        help='Config YAML (default: config.yaml)')
     args = parser.parse_args()
     run_fdr_analysis(args.config)

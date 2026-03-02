@@ -1,0 +1,72 @@
+# Precision Rig 709 HXI HT — eWON Fleet Profile
+# Register map from confirmed HXI template + live discovery (2026-02-26)
+name: precision_rig_709_hxi_ht
+ewon_name: "Precision Rig 709 HXI HT"
+status: connected
+customer: "Precision"
+equipment_type: hxi_ht
+description: "HT HXI"
+firmware: "14.7s2"
+
+plc_ip: "129.168.1.25"
+plc_port: 502
+unit_id: 0
+word_swap: true
+
+motor_displacement_cc: 250.0
+max_pressure_psi: 5000.0
+encoder_cpr: 1174
+torque_cell_capacity_ftlbs: 50000.0
+
+reg_map:
+  torque:
+    address: 163
+    data_type: FLOAT32
+    unit: ft-lbs
+    description: "CONFIRMED — 14,056 ft-lbs during active threading"
+  turns:
+    address: 165
+    data_type: FLOAT32
+    unit: turns
+    description: "CONFIRMED — 0.4392 turns"
+  temperature:
+    address: 167
+    data_type: FLOAT32
+    unit: degF
+    description: "CONFIRMED — 127.4°F oil temp"
+  rpm:
+    address: 169
+    data_type: FLOAT32
+    unit: RPM
+    description: "CONFIRMED — 87.4 RPM"
+  hookload:
+    address: 189
+    data_type: FLOAT32
+    unit: lbs
+    scale: 0.001
+    description: "CONFIRMED — 16,208 lbs → 16.2 klbs"
+  encoder_counts:
+    address: 2076
+    data_type: INT32
+    unit: counts
+    description: "CONFIRMED — R2076(LSW)+R2077(MSW=2), ~166k counts"
+  connection_state:
+    address: 175
+    data_type: INT16
+    unit: enum
+    description: "LIKELY — value=5 (HOLD) during hold phase. Steve confirm?"
+  target_torque:
+    address: 178
+    data_type: INT16
+    unit: ft-lbs
+    description: "LIKELY — value=17,297. Reasonable casing target. Steve confirm?"
+  shoulder_torque:
+    address: 180
+    data_type: INT16
+    unit: ft-lbs
+    description: "LIKELY — value=16,928. Could be peak_torque instead. Steve confirm?"
+  connection_count:
+    address: 185
+    data_type: INT16
+    unit: count
+    description: "LIKELY — value=20. Steve confirm?"

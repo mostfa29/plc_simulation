@@ -23,7 +23,6 @@ from torch.utils.data import Dataset
 from features import (
     compute_derived_channels,
     NUM_RAW_CHANNELS, NUM_TOTAL_CHANNELS,
-    CH_MASK,
 )
 
 # Channel modes: 'all' = 12 channels (6 raw + 6 derived), 'raw_only' = 6 raw channels
@@ -305,11 +304,7 @@ def compute_norm_params(windows_list):
 
 
 def apply_normalization(windows, norm):
-    num_ch = windows.shape[-1]
     normalized = (windows - norm.mean) / norm.std
-    # Preserve mask channel if using all channels (12-ch mode)
-    if num_ch == NUM_TOTAL_CHANNELS:
-        normalized[:, :, CH_MASK] = windows[:, :, CH_MASK]
     return normalized.astype(np.float32)
 
 

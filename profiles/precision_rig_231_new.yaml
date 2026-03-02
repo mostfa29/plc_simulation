@@ -1,0 +1,75 @@
+# Precision Rig 231 new — eWON Fleet Profile
+# Auto-generated from ewon_fleet.csv
+name: precision_rig_231_new
+ewon_name: "Precision Rig 231 new"
+status: online
+customer: "Precision"
+equipment_type: hxi_ht
+description: "HXI HT"
+firmware: "13.2s1"
+
+# Modbus connection (fill in when discovered)
+plc_ip: ""
+plc_port: 502
+unit_id: 0
+word_swap: true
+
+# Equipment specs (fill in per rig)
+motor_displacement_cc: 0.0
+max_pressure_psi: 0.0
+encoder_cpr: 0
+torque_cell_capacity_ftlbs: 0.0
+
+# Register map — HXI family template (confirmed on Rig 709)
+reg_map:
+  torque:
+    address: 163
+    data_type: FLOAT32
+    unit: ft-lbs
+    description: "HXI template — confirmed on Rig 709 HXI HT"
+  turns:
+    address: 165
+    data_type: FLOAT32
+    unit: turns
+    description: "HXI template — confirmed"
+  temperature:
+    address: 167
+    data_type: FLOAT32
+    unit: degF
+    description: "HXI template — confirmed"
+  rpm:
+    address: 169
+    data_type: FLOAT32
+    unit: RPM
+    description: "HXI template — confirmed"
+  hookload:
+    address: 189
+    data_type: FLOAT32
+    unit: lbs
+    scale: 0.001
+    description: "HXI template — confirmed"
+  encoder_counts:
+    address: 2076
+    data_type: INT32
+    unit: counts
+    description: "HXI template — confirmed"
+  connection_state:
+    address: 175
+    data_type: INT16
+    unit: enum
+    description: "HXI template — likely"
+  target_torque:
+    address: 178
+    data_type: INT16
+    unit: ft-lbs
+    description: "HXI template — likely"
+  shoulder_torque:
+    address: 180
+    data_type: INT16
+    unit: ft-lbs
+    description: "HXI template — likely"
+  connection_count:
+    address: 185
+    data_type: INT16
+    unit: count
+    description: "HXI template — likely"

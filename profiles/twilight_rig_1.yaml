@@ -1,0 +1,23 @@
+# Twilight Rig 1 — eWON Fleet Profile
+# Auto-generated from ewon_fleet.csv
+name: twilight_rig_1
+ewon_name: "Twilight Rig 1"
+status: online
+customer: "Twilight"
+equipment_type: unknown
+firmware: "14.4s1"
+
+# Modbus connection (fill in when discovered)
+plc_ip: ""
+plc_port: 502
+unit_id: 0
+word_swap: true
+
+# Equipment specs (fill in per rig)
+motor_displacement_cc: 0.0
+max_pressure_psi: 0.0
+encoder_cpr: 0
+torque_cell_capacity_ftlbs: 0.0
+
+# Register map — populate after discovery scan
+reg_map: {}

@@ -180,28 +180,33 @@ def main():
     if not Path(dataset_dir).is_absolute():
         dataset_dir = str(Path(__file__).parent / dataset_dir)
 
+    channels_mode = config['data'].get('channels_mode', 'all')
     _, _, test_dataset, _ = prepare_datasets(
         dataset_dir=dataset_dir, class_map=config['class_map'],
         window_size=config['data']['window_size'],
         stride=config['data']['window_stride'],
         split_ratio=tuple(config['data']['split_ratio']),
-        split_seed=config['data'].get('split_seed', 42))
+        split_seed=config['data'].get('split_seed', 42),
+        channels_mode=channels_mode)
 
     test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
 
     arch = config['model']['architecture']
     c_in, c_out, nf = config['model']['c_in'], config['model']['c_out'], config['model']['nf']
 
+    dropout = config['model'].get('dropout', 0.0)
+
     if arch == 'ResNet':
         ckpt_path = Path(args.checkpoint_dir) / 'resnet_baseline.pt'
         checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
-        model = ResNetBaseline(c_in, c_out)
+        model = ResNetBaseline(c_in, c_out, dropout=dropout)
         model.load_state_dict(checkpoint['model_state_dict'])
         model.to(device).eval()
         models = [model]
     else:
         ensemble_size = config['model'].get('ensemble_size', 5)
-        models = load_ensemble(Path(args.checkpoint_dir), device, c_in, c_out, nf, ensemble_size)
+        models = load_ensemble(Path(args.checkpoint_dir), device, c_in, c_out, nf,
+                               ensemble_size, dropout=dropout)
 
     preds, labels, probs = ensemble_predict(models, test_loader, device)
 

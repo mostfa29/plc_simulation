@@ -274,6 +274,8 @@ def main():
     parser.add_argument('--smoke-test', action='store_true')
     parser.add_argument('--output-dir', type=str, default='./results')
     parser.add_argument('--device', type=str, default=None)
+    parser.add_argument('--hierarchical', action='store_true',
+                        help='Use two-stage hierarchical classifier (Session 3)')
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -327,9 +329,42 @@ def main():
 
     arch = config['model']['architecture']
     c_in, c_out, nf = config['model']['c_in'], config['model']['c_out'], config['model']['nf']
+    dropout = config['model'].get('dropout', 0.0)
 
+    # ── Hierarchical two-stage training (Session 3) ──
+    if args.hierarchical:
+        from hierarchical import HierarchicalClassifier, evaluate_hierarchical
+
+        logger.info("\n" + "=" * 60)
+        logger.info("HIERARCHICAL TWO-STAGE TRAINING")
+        logger.info("=" * 60)
+
+        hier = HierarchicalClassifier(c_in=c_in, nf=nf, device=device)
+
+        # Stage 1: Binary (normal vs fault)
+        hier.train_stage1(
+            train_dataset.windows, train_dataset.labels,
+            val_dataset.windows, val_dataset.labels,
+            config, checkpoints_dir, logs_dir)
+
+        # Stage 2: 8-class fault subtype
+        hier.train_stage2(
+            train_dataset.windows, train_dataset.labels,
+            val_dataset.windows, val_dataset.labels,
+            config, checkpoints_dir, logs_dir)
+
+        # Evaluate on test set
+        logger.info("\n" + "=" * 60)
+        logger.info("HIERARCHICAL EVALUATION ON TEST SET")
+        logger.info("=" * 60)
+        class_names = config.get('class_names', [f'class_{i}' for i in range(c_out)])
+        preds = hier.predict_from_numpy(test_dataset.windows)
+        evaluate_hierarchical(preds, test_dataset.labels, class_names)
+        return
+
+    # ── Standard flat training ──
     if arch == 'ResNet':
-        model = create_model('ResNet', c_in, c_out).to(device)
+        model = create_model('ResNet', c_in, c_out, dropout=dropout).to(device)
         best_f1 = train_single_model(
             model, train_dataset, val_dataset, config, device,
             str(checkpoints_dir / 'resnet_baseline.pt'),
@@ -344,7 +379,7 @@ def main():
             logger.info(f"Training member {i+1}/{ensemble_size} (seed={mseed})")
             torch.manual_seed(mseed)
             np.random.seed(mseed)
-            model = InceptionTimeNetwork(c_in, c_out, nf).to(device)
+            model = InceptionTimeNetwork(c_in, c_out, nf, dropout=dropout).to(device)
             best_f1 = train_single_model(
                 model, train_dataset, val_dataset, config, device,
                 str(checkpoints_dir / f'inception_{i}_best.pt'),
