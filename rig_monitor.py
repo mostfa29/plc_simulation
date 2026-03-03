@@ -746,7 +746,10 @@ class RigMonitorService:
     # ───────────────────────────────────────────────────────────────
 
     def _setup_logging(self):
-        """Configure rotating file logger."""
+        """Configure rotating file logger (skip if already set up)."""
+        root = logging.getLogger()
+        if root.handlers:
+            return  # Already configured by _setup_service_logging or previous run
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         handler = RotatingFileHandler(
             LOG_DIR / "rig_monitor.log",
@@ -758,7 +761,6 @@ class RigMonitorService:
             '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S',
         ))
-        root = logging.getLogger()
         root.setLevel(logging.INFO)
         root.addHandler(handler)
 
@@ -1063,6 +1065,23 @@ class DashboardViewer:
 # CLI
 # ═══════════════════════════════════════════════════════════════════
 
+def _setup_service_logging():
+    """Set up logging early so crashes before RigMonitorService.run() are captured."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(
+        LOG_DIR / "rig_monitor.log",
+        maxBytes=5_000_000, backupCount=5, encoding='utf-8',
+    )
+    handler.setFormatter(logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+    ))
+    root = logging.getLogger()
+    if not root.handlers:
+        root.setLevel(logging.INFO)
+        root.addHandler(handler)
+
+
 def cmd_status():
     """Print one-shot status and exit."""
     if not STATUS_FILE.exists():
@@ -1251,20 +1270,53 @@ Examples:
                 existing = json.loads(
                     STATUS_FILE.read_text(encoding='utf-8'))
                 pid = existing.get("service_pid", 0)
-                if isinstance(pid, int) and check_pid_alive(pid):
-                    print(f"  Service already running (PID {pid})")
-                    print(f"  Stop first: python rig_monitor.py --stop")
-                    sys.exit(1)
+                if isinstance(pid, int) and pid != os.getpid() and check_pid_alive(pid):
+                    # Already running — exit silently (no crash, no restart)
+                    sys.exit(0)
             except Exception:
                 pass
 
-        service = RigMonitorService(
-            profile_dir=args.profile_dir,
-            output_dir=args.output_dir,
-            hz=args.hz,
-            timeout=args.timeout,
-        )
-        service.run()
+        # ── Crash-proof service loop ──
+        # If the service crashes, wait with backoff then retry.
+        # This prevents the CMD-window-flashing loop on Task Scheduler.
+        _setup_service_logging()
+        crash_count = 0
+        max_backoff = 300  # 5 minutes max wait between retries
+
+        while True:
+            try:
+                service = RigMonitorService(
+                    profile_dir=args.profile_dir,
+                    output_dir=args.output_dir,
+                    hz=args.hz,
+                    timeout=args.timeout,
+                )
+                service.run()
+                break  # Clean exit (stop signal received)
+            except SystemExit:
+                break  # Explicit exit
+            except Exception:
+                crash_count += 1
+                backoff = min(10 * (2 ** (crash_count - 1)), max_backoff)
+                logger.exception(
+                    f"Service crashed (attempt #{crash_count}), "
+                    f"retrying in {backoff}s")
+                # Write crash status so dashboard can show it
+                try:
+                    atomic_write_json(STATUS_FILE, {
+                        "service_pid": os.getpid(),
+                        "state": "crashed",
+                        "errors": [
+                            f"Crash #{crash_count}, retrying in {backoff}s"],
+                        "last_updated": datetime.now(
+                            timezone.utc).isoformat(timespec='milliseconds'),
+                    })
+                except Exception:
+                    pass
+                time.sleep(backoff)
+                if crash_count >= 20:
+                    logger.error("Too many crashes — giving up")
+                    break
 
     elif args.dashboard:
         viewer = DashboardViewer()
