@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TopDrive AI — Rig Monitor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1923;
+    --card: #1a2332;
+    --card-border: #2a3a4a;
+    --text: #e0e6ed;
+    --text-dim: #6b7b8d;
+    --green: #00e676;
+    --yellow: #ffd600;
+    --red: #ff5252;
+    --cyan: #00e5ff;
+    --blue: #448aff;
+    --orange: #ff9100;
+  }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  /* Header */
+  .header {
+    background: linear-gradient(135deg, #1a2332 0%, #0d253a 100%);
+    border-bottom: 2px solid var(--card-border);
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--cyan);
+    letter-spacing: 0.5px;
+  }
+  .header h1 span { color: var(--text-dim); font-weight: 400; }
+  .header-actions { display: flex; gap: 8px; }
+  .btn {
+    padding: 8px 18px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .btn:hover { transform: translateY(-1px); filter: brightness(1.1); }
+  .btn:active { transform: translateY(0); }
+  .btn-start { background: var(--green); color: #0a1a0a; }
+  .btn-stop { background: var(--red); color: #fff; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+
+  /* Status bar */
+  .status-bar {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 16px 24px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .status-dot {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    display: inline-block;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .status-dot.green { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .status-dot.yellow { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+  .status-dot.red { background: var(--red); box-shadow: 0 0 8px var(--red); animation: none; }
+  .status-dot.off { background: #444; animation: none; }
+  .status-label { font-size: 18px; font-weight: 700; text-transform: uppercase; }
+  .status-meta { color: var(--text-dim); font-size: 13px; }
+
+  /* Warning banner */
+  .warning-banner {
+    background: rgba(255, 82, 82, 0.15);
+    border: 1px solid var(--red);
+    border-radius: 8px;
+    padding: 12px 20px;
+    margin-bottom: 16px;
+    color: var(--red);
+    font-weight: 600;
+    text-align: center;
+    display: none;
+  }
+
+  /* VPN + Rig info */
+  .info-row {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 14px 24px;
+    margin-bottom: 16px;
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+  .info-item { display: flex; align-items: center; gap: 8px; }
+  .info-label { color: var(--text-dim); font-size: 12px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+  .info-value { font-size: 14px; font-weight: 500; }
+
+  /* Gauge cards */
+  .gauges {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 700px) { .gauges { grid-template-columns: repeat(2, 1fr); } }
+  .gauge {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+    transition: border-color 0.3s;
+  }
+  .gauge:hover { border-color: var(--cyan); }
+  .gauge-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .gauge-value {
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    transition: color 0.3s;
+  }
+  .gauge-unit {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  /* Secondary values */
+  .secondary-values {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 16px 24px;
+    margin-bottom: 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px 24px;
+  }
+  .sec-item { display: flex; justify-content: space-between; align-items: baseline; }
+  .sec-label { color: var(--text-dim); font-size: 12px; text-transform: uppercase; font-weight: 600; }
+  .sec-value { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* State path */
+  .state-path {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 14px 24px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .path-step {
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    background: #2a3a4a;
+    color: var(--text-dim);
+  }
+  .path-step.active { background: var(--cyan); color: #0a1a2a; }
+  .path-arrow { color: var(--text-dim); font-size: 14px; }
+
+  /* Capture & history */
+  .capture-bar {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 14px 24px;
+    margin-bottom: 16px;
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .cap-item { display: flex; align-items: center; gap: 6px; }
+  .cap-label { color: var(--text-dim); font-size: 12px; text-transform: uppercase; font-weight: 600; }
+  .cap-value { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* Errors & Logs section */
+  .collapsible {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .collapsible-header {
+    padding: 12px 20px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+  .collapsible-header:hover { background: rgba(255,255,255,0.03); }
+  .collapsible-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+  .collapsible-arrow { color: var(--text-dim); transition: transform 0.2s; }
+  .collapsible.open .collapsible-arrow { transform: rotate(180deg); }
+  .collapsible-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+  }
+  .collapsible.open .collapsible-body { max-height: 400px; overflow-y: auto; }
+  .collapsible-content {
+    padding: 0 20px 16px;
+    font-size: 12px;
+    font-family: 'Consolas', 'Cascadia Code', monospace;
+    line-height: 1.6;
+    color: var(--text-dim);
+  }
+  .error-line { color: var(--orange); padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .log-line { padding: 1px 0; }
+
+  /* Footer */
+  .footer {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-dim);
+    font-size: 11px;
+  }
+
+  /* Not running overlay */
+  .not-running {
+    text-align: center;
+    padding: 60px 20px;
+  }
+  .not-running h2 { font-size: 24px; color: var(--text-dim); margin-bottom: 12px; }
+  .not-running p { color: var(--text-dim); font-size: 14px; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>TopDrive AI <span>— Rig Monitor</span></h1>
+  <div class="header-actions">
+    <button class="btn btn-start" id="btnStart" onclick="doStart()">Start Service</button>
+    <button class="btn btn-stop" id="btnStop" onclick="doStop()">Stop Service</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="warning-banner" id="warningBanner"></div>
+
+  <div id="notRunning" class="not-running" style="display:none;">
+    <h2>Service Not Running</h2>
+    <p>Click <strong>Start Service</strong> to begin monitoring.</p>
+  </div>
+
+  <div id="liveContent" style="display:none;">
+    <!-- Status bar -->
+    <div class="status-bar">
+      <span class="status-dot off" id="statusDot"></span>
+      <span class="status-label" id="statusLabel">--</span>
+      <span class="status-meta" id="statusUptime">Uptime: --</span>
+      <span class="status-meta" id="statusPid">PID: --</span>
+    </div>
+
+    <!-- VPN + Rig info -->
+    <div class="info-row">
+      <div class="info-item">
+        <span class="info-label">VPN</span>
+        <span class="status-dot off" id="vpnDot" style="width:10px;height:10px;"></span>
+        <span class="info-value" id="vpnStatus">Disconnected</span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">Device</span>
+        <span class="info-value" id="vpnDevice">--</span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">IP</span>
+        <span class="info-value" id="vpnIp">--</span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">Rig</span>
+        <span class="info-value" id="rigName">--</span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">Type</span>
+        <span class="info-value" id="rigType">--</span>
+      </div>
+    </div>
+
+    <!-- Gauge cards -->
+    <div class="gauges">
+      <div class="gauge">
+        <div class="gauge-label">Torque</div>
+        <div class="gauge-value" id="gTorque" style="color:var(--cyan)">--</div>
+        <div class="gauge-unit">ft-lb</div>
+      </div>
+      <div class="gauge">
+        <div class="gauge-label">RPM</div>
+        <div class="gauge-value" id="gRpm" style="color:var(--green)">--</div>
+        <div class="gauge-unit">&nbsp;</div>
+      </div>
+      <div class="gauge">
+        <div class="gauge-label">Oil Temp</div>
+        <div class="gauge-value" id="gTemp" style="color:var(--orange)">--</div>
+        <div class="gauge-unit">&deg;F</div>
+      </div>
+      <div class="gauge">
+        <div class="gauge-label">Hookload</div>
+        <div class="gauge-value" id="gHookload" style="color:var(--blue)">--</div>
+        <div class="gauge-unit">klbs</div>
+      </div>
+    </div>
+
+    <!-- Secondary values -->
+    <div class="secondary-values">
+      <div class="sec-item">
+        <span class="sec-label">Turns</span>
+        <span class="sec-value" id="secTurns">--</span>
+      </div>
+      <div class="sec-item">
+        <span class="sec-label">Target Torque</span>
+        <span class="sec-value" id="secTarget">--</span>
+      </div>
+      <div class="sec-item">
+        <span class="sec-label">Peak Torque</span>
+        <span class="sec-value" id="secPeak">--</span>
+      </div>
+      <div class="sec-item">
+        <span class="sec-label">Pressure</span>
+        <span class="sec-value" id="secPressure">-- PSI</span>
+      </div>
+      <div class="sec-item">
+        <span class="sec-label">Shoulder</span>
+        <span class="sec-value" id="secShoulder">--</span>
+      </div>
+      <div class="sec-item">
+        <span class="sec-label">Quality</span>
+        <span class="sec-value" id="secQuality">--</span>
+      </div>
+      <div class="sec-item">
+        <span class="sec-label">State</span>
+        <span class="sec-value" id="secState">--</span>
+      </div>
+      <div class="sec-item">
+        <span class="sec-label">Fault</span>
+        <span class="sec-value" id="secFault">NONE</span>
+      </div>
+    </div>
+
+    <!-- State path -->
+    <div class="state-path" id="statePath">
+      <span class="info-label" style="margin-right:4px;">Path:</span>
+    </div>
+
+    <!-- Capture & history -->
+    <div class="capture-bar">
+      <div class="cap-item">
+        <span class="cap-label">Capture</span>
+        <span class="status-dot off" id="capDot" style="width:10px;height:10px;"></span>
+        <span class="cap-value" id="capStatus">Idle</span>
+      </div>
+      <div class="cap-item">
+        <span class="cap-label">Hz</span>
+        <span class="cap-value" id="capHz">--</span>
+      </div>
+      <div class="cap-item">
+        <span class="cap-label">Rows</span>
+        <span class="cap-value" id="capRows">--</span>
+      </div>
+      <div class="cap-item">
+        <span class="cap-label">Conn #</span>
+        <span class="cap-value" id="capConn">--</span>
+      </div>
+      <div class="cap-item">
+        <span class="cap-label">Session</span>
+        <span class="cap-value" id="histSession">--</span>
+      </div>
+      <div class="cap-item">
+        <span class="cap-label">Today</span>
+        <span class="cap-value" id="histToday">--</span>
+      </div>
+      <div class="cap-item">
+        <span class="cap-label">VPN Switches</span>
+        <span class="cap-value" id="histSwitches">--</span>
+      </div>
+    </div>
+
+    <!-- Errors -->
+    <div class="collapsible" id="errorsSection">
+      <div class="collapsible-header" onclick="toggleCollapsible('errorsSection')">
+        <span class="collapsible-title">Recent Errors <span id="errorCount"></span></span>
+        <span class="collapsible-arrow">&#9660;</span>
+      </div>
+      <div class="collapsible-body">
+        <div class="collapsible-content" id="errorsList"></div>
+      </div>
+    </div>
+
+    <!-- Logs -->
+    <div class="collapsible" id="logsSection">
+      <div class="collapsible-header" onclick="toggleCollapsible('logsSection')">
+        <span class="collapsible-title">Service Logs</span>
+        <span class="collapsible-arrow">&#9660;</span>
+      </div>
+      <div class="collapsible-body">
+        <div class="collapsible-content" id="logsList">Click to load...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">TopDrive AI &mdash; Rig Monitor Dashboard</div>
+</div>
+
+<script>
+const STATE_NAMES = {
+  0: 'IDLE', 1: 'STAB', 2: 'SPIN_IN', 3: 'SHOULDER',
+  4: 'POWER_TIGHT', 5: 'HOLD', 6: 'BREAKOUT', 7: 'SPIN_OUT',
+  8: 'COMPLETE', 9: 'COMPLETE'
+};
+const STATE_SHORT = {
+  0: 'IDL', 1: 'STB', 2: 'SPN', 3: 'SHO',
+  4: 'PWR', 5: 'HLD', 6: 'BRK', 7: 'SPO',
+  8: 'CMP', 9: 'CMP'
+};
+
+let logsLoaded = false;
+let lastState = null;
+
+function fmt(v, decimals) {
+  if (v === null || v === undefined) return '--';
+  if (decimals === 0) return Math.round(v).toLocaleString();
+  return Number(v).toFixed(decimals !== undefined ? decimals : 1);
+}
+
+function formatUptime(secs) {
+  if (!secs || secs < 0) return '--';
+  if (secs < 60) return Math.round(secs) + 's';
+  if (secs < 3600) return Math.round(secs / 60) + 'm';
+  var h = Math.floor(secs / 3600);
+  var m = Math.round((secs % 3600) / 60);
+  return h + 'h ' + m + 'm';
+}
+
+function $(id) { return document.getElementById(id); }
+
+function updateDashboard(data) {
+  if (!data) {
+    $('notRunning').style.display = 'block';
+    $('liveContent').style.display = 'none';
+    $('warningBanner').style.display = 'none';
+    $('btnStart').disabled = false;
+    $('btnStop').disabled = true;
+    document.title = 'TopDrive AI — Not Running';
+    return;
+  }
+
+  $('notRunning').style.display = 'none';
+  $('liveContent').style.display = 'block';
+
+  // Stale check
+  var stale = false;
+  try {
+    var lastUp = new Date(data.last_updated);
+    var age = (Date.now() - lastUp.getTime()) / 1000;
+    if (age > 30) {
+      stale = true;
+      $('warningBanner').textContent = 'SERVICE NOT RESPONDING — last update ' + Math.round(age) + 's ago';
+      $('warningBanner').style.display = 'block';
+    } else {
+      $('warningBanner').style.display = 'none';
+    }
+  } catch(e) { /* ignore */ }
+
+  var state = data.state || 'unknown';
+  var stateUpper = state.toUpperCase();
+
+  // Status bar
+  var dot = $('statusDot');
+  dot.className = 'status-dot';
+  if (state === 'capturing') { dot.classList.add('green'); }
+  else if (state === 'waiting_for_vpn' || state === 'discovering' || state === 'starting') { dot.classList.add('yellow'); }
+  else if (state === 'error' || state === 'stopped' || state === 'crashed') { dot.classList.add('red'); }
+  else { dot.classList.add('off'); }
+  if (stale) { dot.className = 'status-dot red'; }
+
+  $('statusLabel').textContent = stale ? 'NOT RESPONDING' : stateUpper;
+  $('statusUptime').textContent = 'Uptime: ' + formatUptime(data.uptime_seconds);
+  $('statusPid').textContent = 'PID: ' + (data.service_pid || '--');
+  document.title = 'TopDrive AI — ' + (stale ? 'Not Responding' : stateUpper);
+
+  // Buttons
+  $('btnStart').disabled = (state === 'capturing' || state === 'discovering' || state === 'waiting_for_vpn' || state === 'starting') && !stale;
+  $('btnStop').disabled = stale || state === 'stopped';
+
+  // VPN
+  var vpn = data.vpn || {};
+  var vpnDot = $('vpnDot');
+  vpnDot.className = 'status-dot';
+  vpnDot.style.width = '10px';
+  vpnDot.style.height = '10px';
+  if (vpn.connected) {
+    vpnDot.classList.add('green');
+    $('vpnStatus').textContent = 'Connected';
+    $('vpnStatus').style.color = 'var(--green)';
+  } else {
+    vpnDot.classList.add('red');
+    $('vpnStatus').textContent = 'Disconnected';
+    $('vpnStatus').style.color = 'var(--red)';
+  }
+  $('vpnDevice').textContent = vpn.device_name || '--';
+  $('vpnIp').textContent = vpn.gateway_ip || '--';
+
+  // Rig
+  var rig = data.rig || {};
+  $('rigName').textContent = rig.name || '--';
+  $('rigType').textContent = (rig.equipment_type || '--').toUpperCase();
+
+  // Live values
+  var v = data.live_values || {};
+  $('gTorque').textContent = v.torque_ftlbs != null ? Math.round(v.torque_ftlbs).toLocaleString() : '--';
+  $('gRpm').textContent = fmt(v.rpm, 1);
+  $('gTemp').textContent = fmt(v.oil_temp_f, 0);
+  $('gHookload').textContent = fmt(v.hookload_klbs, 1);
+
+  // Secondary
+  $('secTurns').textContent = fmt(v.turns, 3);
+  $('secTarget').textContent = v.target_torque != null ? Math.round(v.target_torque).toLocaleString() : '--';
+  $('secPeak').textContent = v.peak_torque != null ? Math.round(v.peak_torque).toLocaleString() : '--';
+  $('secPressure').textContent = (v.pressure_psi != null ? Math.round(v.pressure_psi).toLocaleString() : '--') + ' PSI';
+  $('secShoulder').textContent = v.shoulder_torque != null ? Math.round(v.shoulder_torque).toLocaleString() : '--';
+
+  // Engine state
+  var eng = data.engine || {};
+  $('secState').textContent = eng.state_name || '--';
+  $('secQuality').textContent = eng.quality_score != null ? eng.quality_score.toFixed(2) : '--';
+  $('secFault').textContent = v.fault_code != null ? (v.fault_code === 0 ? 'NONE' : 'CODE ' + v.fault_code) : 'NONE';
+
+  // State path
+  var pathContainer = $('statePath');
+  var pathHist = eng.state_path || [];
+  var pathHtml = '<span class="info-label" style="margin-right:4px;">Path:</span>';
+  var last6 = pathHist.slice(-6);
+  for (var i = 0; i < last6.length; i++) {
+    var s = last6[i];
+    var isActive = (i === last6.length - 1);
+    pathHtml += '<span class="path-step' + (isActive ? ' active' : '') + '">' + (STATE_SHORT[s] || '?') + '</span>';
+    if (i < last6.length - 1) pathHtml += '<span class="path-arrow">&#9654;</span>';
+  }
+  if (last6.length === 0) pathHtml += '<span style="color:var(--text-dim)">--</span>';
+  pathContainer.innerHTML = pathHtml;
+
+  // Capture
+  var cap = data.capture || {};
+  var capDot = $('capDot');
+  capDot.className = 'status-dot';
+  capDot.style.width = '10px';
+  capDot.style.height = '10px';
+  if (cap.active) {
+    capDot.classList.add('green');
+    $('capStatus').textContent = 'Active';
+    $('capStatus').style.color = 'var(--green)';
+  } else if (cap.error) {
+    capDot.classList.add('red');
+    $('capStatus').textContent = cap.error;
+    $('capStatus').style.color = 'var(--red)';
+  } else {
+    capDot.classList.add('off');
+    $('capStatus').textContent = 'Idle';
+    $('capStatus').style.color = 'var(--text-dim)';
+  }
+  $('capHz').textContent = cap.hz ? cap.hz.toFixed(1) : '--';
+  $('capRows').textContent = cap.total_rows != null ? cap.total_rows.toLocaleString() : '--';
+  $('capConn').textContent = cap.connection_num || '--';
+
+  // History
+  var hist = data.history || {};
+  $('histSession').textContent = hist.session_connections || '0';
+  $('histToday').textContent = hist.today_connections || '0';
+  $('histSwitches').textContent = hist.vpn_switches_today || '0';
+
+  // Errors
+  var errors = data.errors || [];
+  $('errorCount').textContent = errors.length > 0 ? '(' + errors.length + ')' : '';
+  if (errors.length > 0) {
+    $('errorsList').innerHTML = errors.map(function(e) {
+      return '<div class="error-line">' + escHtml(e) + '</div>';
+    }).join('');
+  } else {
+    $('errorsList').innerHTML = '<div style="color:var(--green)">No errors</div>';
+  }
+}
+
+function escHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function toggleCollapsible(id) {
+  var el = document.getElementById(id);
+  el.classList.toggle('open');
+  // Load logs on first open
+  if (id === 'logsSection' && el.classList.contains('open') && !logsLoaded) {
+    fetchLogs();
+  }
+}
+
+async function fetchStatus() {
+  try {
+    var resp = await fetch('/api/status');
+    if (resp.ok) {
+      var data = await resp.json();
+      updateDashboard(data);
+    } else {
+      updateDashboard(null);
+    }
+  } catch(e) {
+    // Server not reachable (might be shutting down)
+  }
+}
+
+async function fetchLogs() {
+  try {
+    var resp = await fetch('/api/logs');
+    if (resp.ok) {
+      var data = await resp.json();
+      var lines = data.lines || [];
+      $('logsList').innerHTML = lines.map(function(l) {
+        return '<div class="log-line">' + escHtml(l) + '</div>';
+      }).join('');
+      logsLoaded = true;
+    }
+  } catch(e) {
+    $('logsList').textContent = 'Failed to load logs.';
+  }
+}
+
+async function doStart() {
+  $('btnStart').disabled = true;
+  try {
+    var resp = await fetch('/api/start', { method: 'POST' });
+    var data = await resp.json();
+    if (!data.ok) alert('Start failed: ' + (data.error || 'unknown'));
+  } catch(e) {
+    alert('Failed to start service: ' + e.message);
+  }
+  // Re-enable after 3s (give service time to start)
+  setTimeout(function() { $('btnStart').disabled = false; }, 3000);
+}
+
+async function doStop() {
+  $('btnStop').disabled = true;
+  try {
+    var resp = await fetch('/api/stop', { method: 'POST' });
+    var data = await resp.json();
+    if (!data.ok) alert('Stop failed: ' + (data.error || 'unknown'));
+  } catch(e) {
+    alert('Failed to stop service: ' + e.message);
+  }
+  setTimeout(function() { $('btnStop').disabled = false; }, 3000);
+}
+
+// Refresh logs if section is open
+setInterval(function() {
+  var el = document.getElementById('logsSection');
+  if (el.classList.contains('open')) fetchLogs();
+}, 5000);
+
+// Main poll loop
+setInterval(fetchStatus, 1000);
+fetchStatus();
+</script>
+</body>
+</html>

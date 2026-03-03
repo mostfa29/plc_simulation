@@ -1062,6 +1062,157 @@ class DashboardViewer:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# DashboardWebServer — Local Web Dashboard
+# ═══════════════════════════════════════════════════════════════════
+
+class DashboardWebServer:
+    """Local HTTP server for web-based dashboard — zero dependencies."""
+
+    def __init__(self, port: int = 8420):
+        self.port = port
+        self.html_path = PROJECT_DIR / "dashboard.html"
+        self.log_path = LOG_DIR / "rig_monitor.log"
+
+    def run(self):
+        import webbrowser
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+
+        server_ref = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == '/' or self.path == '/index.html':
+                    self._serve_html()
+                elif self.path == '/api/status':
+                    self._api_status()
+                elif self.path == '/api/logs':
+                    self._api_logs()
+                else:
+                    self.send_error(404)
+
+            def do_POST(self):
+                if self.path == '/api/stop':
+                    self._api_stop()
+                elif self.path == '/api/start':
+                    self._api_start()
+                else:
+                    self.send_error(404)
+
+            def _serve_html(self):
+                try:
+                    content = server_ref.html_path.read_bytes()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Content-Length', str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
+                except FileNotFoundError:
+                    self.send_error(404, 'dashboard.html not found')
+
+            def _api_status(self):
+                try:
+                    if STATUS_FILE.exists():
+                        data = json.loads(
+                            STATUS_FILE.read_text(encoding='utf-8'))
+                        # Check if service process is actually alive
+                        pid = data.get("service_pid", 0)
+                        if isinstance(pid, int) and pid > 0:
+                            data["process_alive"] = check_pid_alive(pid)
+                        self._json_response(data)
+                    else:
+                        self._json_response(None)
+                except Exception as e:
+                    self._json_response({"error": str(e)}, status=500)
+
+            def _api_logs(self):
+                lines = []
+                try:
+                    if server_ref.log_path.exists():
+                        with open(server_ref.log_path, 'r',
+                                  encoding='utf-8', errors='replace') as f:
+                            all_lines = f.readlines()
+                            lines = [l.rstrip() for l in all_lines[-50:]]
+                except Exception as e:
+                    lines = [f"Error reading log: {e}"]
+                self._json_response({"lines": lines})
+
+            def _api_stop(self):
+                try:
+                    # Same logic as cmd_stop()
+                    if STATUS_FILE.exists():
+                        status = json.loads(
+                            STATUS_FILE.read_text(encoding='utf-8'))
+                        pid = status.get("service_pid", 0)
+                        if isinstance(pid, int) and check_pid_alive(pid):
+                            STOP_SIGNAL_FILE.write_text(
+                                "stop", encoding='utf-8')
+                            self._json_response(
+                                {"ok": True, "message": f"Stop signal sent to PID {pid}"})
+                            return
+                    self._json_response(
+                        {"ok": False, "error": "No running service found"})
+                except Exception as e:
+                    self._json_response(
+                        {"ok": False, "error": str(e)}, status=500)
+
+            def _api_start(self):
+                import subprocess
+                try:
+                    vbs_path = PROJECT_DIR / "start_hidden.vbs"
+                    if not vbs_path.exists():
+                        self._json_response(
+                            {"ok": False,
+                             "error": "start_hidden.vbs not found"})
+                        return
+                    subprocess.Popen(
+                        ["wscript", str(vbs_path)],
+                        cwd=str(PROJECT_DIR),
+                    )
+                    self._json_response(
+                        {"ok": True, "message": "Service starting..."})
+                except Exception as e:
+                    self._json_response(
+                        {"ok": False, "error": str(e)}, status=500)
+
+            def _json_response(self, data, status=200):
+                body = json.dumps(data).encode('utf-8')
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                # Suppress HTTP access logs to keep console clean
+                pass
+
+        try:
+            server = HTTPServer(('127.0.0.1', self.port), Handler)
+        except OSError as e:
+            if 'address already in use' in str(e).lower() or \
+               getattr(e, 'errno', 0) == 10048:  # Windows WSAEADDRINUSE
+                print(f"\n  Port {self.port} already in use.")
+                print(f"  Dashboard may already be open.")
+                print(f"  Try: http://localhost:{self.port}")
+                webbrowser.open(f"http://localhost:{self.port}")
+                return
+            raise
+
+        url = f"http://localhost:{self.port}"
+        print(f"\n  TopDrive AI — Web Dashboard")
+        print(f"  ===========================")
+        print(f"  URL:  {url}")
+        print(f"  Press Ctrl+C to close\n")
+        webbrowser.open(url)
+
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\n  Dashboard server stopped.")
+            server.server_close()
+
+
+# ═══════════════════════════════════════════════════════════════════
 # CLI
 # ═══════════════════════════════════════════════════════════════════
 
@@ -1255,33 +1406,38 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Modes:
-  --service     Run headless background service (for Task Scheduler)
-  --dashboard   Launch Rich TUI dashboard
+  --service     Run headless background service (auto-start)
+  --web         Launch web dashboard in browser (recommended)
+  --dashboard   Launch Rich TUI dashboard (terminal)
   --status      Print current status and exit
   --install     Create Windows auto-start task
   --uninstall   Remove Windows auto-start task
   --stop        Stop running service
 
 Examples:
+  python rig_monitor.py --web
   python rig_monitor.py --service
-  python rig_monitor.py --dashboard
   python rig_monitor.py --install
         """)
 
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--service", action="store_true",
                       help="Run as headless background service")
+    mode.add_argument("--web", action="store_true",
+                      help="Launch web dashboard in browser")
     mode.add_argument("--dashboard", action="store_true",
-                      help="Launch Rich TUI dashboard")
+                      help="Launch Rich TUI dashboard (terminal)")
     mode.add_argument("--status", action="store_true",
                       help="Print current status and exit")
     mode.add_argument("--install", action="store_true",
-                      help="Create Windows Task Scheduler entry")
+                      help="Create Windows auto-start entry")
     mode.add_argument("--uninstall", action="store_true",
-                      help="Remove Windows Task Scheduler entry")
+                      help="Remove Windows auto-start entry")
     mode.add_argument("--stop", action="store_true",
                       help="Stop running service")
 
+    parser.add_argument("--port", type=int, default=8420,
+                        help="Web dashboard port (default: 8420)")
     parser.add_argument("--profile-dir", default=str(DEFAULT_PROFILE_DIR))
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--hz", type=float, default=DEFAULT_HZ)
@@ -1349,6 +1505,10 @@ Examples:
                 if crash_count >= 20:
                     logger.error("Too many crashes — giving up")
                     break
+
+    elif args.web:
+        web = DashboardWebServer(port=args.port)
+        web.run()
 
     elif args.dashboard:
         viewer = DashboardViewer()
