@@ -2686,21 +2686,29 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
         print(f"  Using --rig override: \"{device_name}\"")
 
     # If device name is still empty, try scraping the eWon web UI
+    # Retry up to 3 times with increasing delay — Flexy 205 SPA needs
+    # time to render the device name (first request often gets "Loading...")
     if not device_name:
         subnet_for_ewon = gw.rsplit('.', 1)[0]
         ewon_ip = f"{subnet_for_ewon}.19"
-        print(f"  No device name from eCatcher — trying eWon web UI at {ewon_ip}...")
-        scraped = _scrape_ewon_name(ewon_ip)
-        if scraped:
-            device_name = scraped
-            print(f"  Got device name from eWon: \"{device_name}\"")
-        else:
-            # Try gateway IP too (in case eWon is not at .19)
-            if gw != ewon_ip and not gw.endswith('.0'):
-                scraped = _scrape_ewon_name(gw)
+        ips_to_try = [ewon_ip]
+        if gw != ewon_ip and not gw.endswith('.0'):
+            ips_to_try.append(gw)
+
+        print(f"  No device name from eCatcher — trying eWon web UI...")
+        for attempt in range(3):
+            if attempt > 0:
+                delay = attempt * 2  # 2s, 4s
+                print(f"  Retry {attempt+1}/3 (waiting {delay}s for SPA to render)...")
+                time.sleep(delay)
+            for try_ip in ips_to_try:
+                scraped = _scrape_ewon_name(try_ip, timeout=6.0)
                 if scraped:
                     device_name = scraped
-                    print(f"  Got device name from eWon ({gw}): \"{device_name}\"")
+                    print(f"  Got device name from eWon ({try_ip}): \"{device_name}\"")
+                    break
+            if device_name:
+                break
 
     if not device_name:
         print(f"  WARNING: Could not determine eWon device name.")
@@ -2844,13 +2852,17 @@ def _auto_discover_rigs(profile_dir: str, timeout: float = 5.0,
             continue
 
         # Strategy 1.5: eWon name didn't match — try IP-based fallback
-        ip_match = _find_profile_by_ip(profile_dir, ip)
-        if ip_match:
-            prof_path, prof = ip_match
-            print(f"    {ip} — KNOWN: {prof.name} "
-                  f"(matched by IP, name \"{device_name}\" unmatched)")
-            results.append((prof_path, prof))
-            continue
+        # BUT: if --rig was specified, the user explicitly told us which rig
+        # this is, so skip IP fallback and go straight to fleet-based creation
+        # (the IP match might find a stale auto-discovered profile).
+        if not rig_override:
+            ip_match = _find_profile_by_ip(profile_dir, ip)
+            if ip_match:
+                prof_path, prof = ip_match
+                print(f"    {ip} — KNOWN: {prof.name} "
+                      f"(matched by IP, name \"{device_name}\" unmatched)")
+                results.append((prof_path, prof))
+                continue
 
         # Strategy 2: New machine — identify from fleet + create profile
         print(f"    {ip} — New rig: \"{device_name}\"")
