@@ -1150,71 +1150,93 @@ def cmd_stop():
 
 
 def cmd_install():
-    """Create Windows Task Scheduler entry."""
+    """Install auto-start via Windows Startup folder shortcut."""
     import subprocess
-    import shutil
 
-    # Find pythonw.exe
     python_exe = sys.executable
-    python_dir = Path(python_exe).parent
-    pythonw = python_dir / "pythonw.exe"
-    if not pythonw.exists():
-        # Try next to python.exe
-        pythonw = shutil.which("pythonw")
-        if not pythonw:
-            print("  ERROR: Cannot find pythonw.exe")
-            print(f"  Looked in: {python_dir}")
-            return
-        pythonw = Path(pythonw)
+    script_dir = Path(__file__).resolve().parent
+    vbs_path = script_dir / "start_hidden.vbs"
 
-    script = Path(__file__).resolve()
+    if not vbs_path.exists():
+        print(f"  ERROR: start_hidden.vbs not found at {vbs_path}")
+        return
+
+    # Remove old Task Scheduler entry if present
+    subprocess.run(
+        ["schtasks", "/DELETE", "/TN", "TopDriveAI_RigMonitor", "/F"],
+        capture_output=True, text=True,
+    )
 
     # Install rich
     print("  Installing 'rich' package...")
     subprocess.run([python_exe, "-m", "pip", "install", "rich", "--quiet"],
                    check=False)
 
-    # Create task
-    task_name = "TopDriveAI_RigMonitor"
-    tr = f'"{pythonw}" "{script}" --service'
+    # Create shortcut in Startup folder
+    startup_dir = Path(os.environ.get("APPDATA", "")) / \
+        "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    shortcut = startup_dir / "TopDriveAI_RigMonitor.lnk"
 
+    # Use PowerShell to create .lnk
+    ps_cmd = (
+        f'$ws = New-Object -ComObject WScript.Shell; '
+        f'$s = $ws.CreateShortcut("{shortcut}"); '
+        f'$s.TargetPath = "{vbs_path}"; '
+        f'$s.WorkingDirectory = "{script_dir}"; '
+        f'$s.Description = "TopDrive AI Rig Monitor"; '
+        f'$s.Save()'
+    )
     result = subprocess.run(
-        ["schtasks", "/CREATE",
-         "/TN", task_name,
-         "/TR", tr,
-         "/SC", "ONLOGON",
-         "/DELAY", "0000:30",
-         "/F",
-         "/RL", "HIGHEST"],
+        ["powershell", "-NoProfile", "-Command", ps_cmd],
         capture_output=True, text=True,
     )
 
-    if result.returncode == 0:
-        print(f"\n  Service installed: {task_name}")
-        print(f"  It will auto-start 30s after login.")
-        print(f"  pythonw: {pythonw}")
-        print(f"  script:  {script}")
-        print(f"\n  To start NOW:   schtasks /RUN /TN \"{task_name}\"")
-        print(f"  To stop:        python rig_monitor.py --stop")
-        print(f"  To uninstall:   python rig_monitor.py --uninstall")
+    if shortcut.exists():
+        print(f"\n  Service installed (Startup folder method)")
+        print(f"  Shortcut: {shortcut}")
+        print(f"  VBS:      {vbs_path}")
+        print(f"\n  To start NOW:      double-click start_hidden.vbs")
+        print(f"  To open dashboard: double-click launch_dashboard.bat")
+        print(f"  To stop:           python rig_monitor.py --stop")
+        print(f"  To uninstall:      python rig_monitor.py --uninstall")
     else:
-        print(f"\n  FAILED to create task.")
-        print(f"  {result.stderr.strip()}")
-        print(f"  Try running as Administrator.")
+        print(f"\n  FAILED to create startup shortcut.")
+        print(f"  Try manually copying start_hidden.vbs to:")
+        print(f"    {startup_dir}")
 
 
 def cmd_uninstall():
-    """Remove Windows Task Scheduler entry."""
+    """Remove all auto-start methods (Task Scheduler + Startup folder)."""
     import subprocess
+
+    removed = []
+
+    # Remove Task Scheduler entry (old method)
     task_name = "TopDriveAI_RigMonitor"
     result = subprocess.run(
         ["schtasks", "/DELETE", "/TN", task_name, "/F"],
         capture_output=True, text=True,
     )
     if result.returncode == 0:
-        print(f"  Service uninstalled: {task_name}")
+        removed.append(f"Task Scheduler: {task_name}")
+
+    # Remove Startup folder shortcut (new method)
+    startup_dir = Path(os.environ.get("APPDATA", "")) / \
+        "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    shortcut = startup_dir / "TopDriveAI_RigMonitor.lnk"
+    if shortcut.exists():
+        shortcut.unlink()
+        removed.append(f"Startup shortcut: {shortcut}")
+
+    # Stop running service
+    cmd_stop()
+
+    if removed:
+        print(f"  Uninstalled:")
+        for r in removed:
+            print(f"    - {r}")
     else:
-        print(f"  Failed: {result.stderr.strip()}")
+        print(f"  Nothing to uninstall (no task or shortcut found)")
 
 
 def main():
