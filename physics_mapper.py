@@ -471,7 +471,7 @@ def _score_pressure(obs: RegisterObservation, spec: EquipmentSpec,
         return None
     v = abs(f_val)
 
-    max_p = 5000.0
+    max_p = spec.max_system_pressure_psi if spec.max_system_pressure_psi > 0 else 5000.0
     if profile and profile.max_pressure_psi > 0:
         max_p = profile.max_pressure_psi
     if v > max_p * 1.2 or v < 10:
@@ -555,8 +555,9 @@ def _score_hookload(obs: RegisterObservation, spec: EquipmentSpec,
         return None
     v = abs(f_val)
 
-    # Hookload: 0-500,000 lbs (0-500 klbs)
-    if v > 600_000 or v < 100:
+    # Hookload: 0 to capacity (in lbs, 1 ton = 2000 lbs)
+    max_lbs = spec.hookload_capacity_tons * 2000 * 1.2
+    if v > max_lbs or v < 100:
         return None
 
     reasons = []

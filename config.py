@@ -240,19 +240,66 @@ class EquipmentType(Enum):
 
 
 @dataclass
+class GearSpeed:
+    """One gear setting in a multi-speed gearbox (e.g. HXI_HT 3-speed)."""
+    gear_name: str                     # "low", "mid", "high"
+    gear_ratio: float
+    max_torque_ftlbs: float            # Continuous output torque in this gear
+    max_rpm: float                     # Max output RPM in this gear
+
+
+@dataclass
 class EquipmentSpec:
     """Physics-relevant defaults per equipment type.
 
     These override ACMotorSpec and TopDriveSpec defaults when
     generating synthetic data for a specific equipment variant.
+
+    Sources: NOV product data sheets, Canrig technical bulletins,
+    Varco service manuals, OEM nameplate specifications cross-
+    referenced across multiple industry publications.
     """
     rated_hp: float
-    gear_ratio: float
+    gear_ratio: float                  # Primary gear ratio (low gear for multi-speed)
     num_speeds: int                    # 1 = single speed, 2-3 = multi-speed HT
-    max_torque_ftlbs: float            # Continuous output torque
+    max_torque_ftlbs: float            # Continuous output torque (ft-lbs)
     max_rpm: float                     # Max output RPM (after gearbox)
     plc_platform: str                  # "CPE305", "CompactLogix", "Rx3i"
     word_swap: bool = True             # GE word-swapped FLOAT32
+
+    # ── Drive type ──────────────────────────────────────────────
+    drive_type: str = "hydraulic"      # "hydraulic" or "electric"
+
+    # ── Hydraulic motor (Rineer vane, Parker, Denison, etc.) ───
+    motor_type: str = ""               # e.g. "Rineer vane", "Parker-Denison T7"
+    motor_displacement_cc: float = 0.0 # Motor displacement (cm³/rev)
+    motor_displacement_cu_in: float = 0.0  # Motor displacement (in³/rev)
+
+    # ── Hydraulic pump (HPU) ───────────────────────────────────
+    pump_type: str = ""                # e.g. "Sauer-Danfoss S90-130cc"
+    pump_displacement_cc: float = 0.0  # Per-pump displacement
+    num_pumps: int = 2                 # Number of main pumps
+
+    # ── Hydraulic system pressures ─────────────────────────────
+    max_system_pressure_psi: float = 0.0      # Relief valve setting
+    nominal_operating_pressure_psi: float = 0.0  # Typical working pressure
+
+    # ── Efficiency ─────────────────────────────────────────────
+    overall_efficiency: float = 0.85   # Drivetrain overall efficiency
+
+    # ── Torque measurement ─────────────────────────────────────
+    torque_cell_capacity_ftlbs: float = 0.0  # Load cell full-scale
+
+    # ── Encoder ────────────────────────────────────────────────
+    encoder_cpr: int = 0               # Counts per revolution (quill encoder)
+
+    # ── Hookload ───────────────────────────────────────────────
+    hookload_capacity_tons: float = 500.0  # Nominal hook capacity
+
+    # ── Multi-speed gearbox (populated for HXI_HT etc.) ───────
+    gear_speeds: List[GearSpeed] = field(default_factory=list)
+
+    # ── Inertia & dynamics ─────────────────────────────────────
     max_intermittent_torque_ftlbs: float = 0.0  # Burst (10s), 0 = auto 1.5x
     rated_motor_rpm: float = 1800.0    # Motor base speed
     rotor_inertia_kgm2: float = 12.0
@@ -261,88 +308,256 @@ class EquipmentSpec:
     def __post_init__(self):
         if self.max_intermittent_torque_ftlbs == 0:
             self.max_intermittent_torque_ftlbs = self.max_torque_ftlbs * 1.5
+        # Auto-compute cu_in from cc if only cc given (and vice versa)
+        if self.motor_displacement_cc > 0 and self.motor_displacement_cu_in == 0:
+            self.motor_displacement_cu_in = self.motor_displacement_cc * 0.0610237
+        elif self.motor_displacement_cu_in > 0 and self.motor_displacement_cc == 0:
+            self.motor_displacement_cc = self.motor_displacement_cu_in / 0.0610237
+
+    @property
+    def active_gear(self) -> Optional[GearSpeed]:
+        """Return primary (low) gear for multi-speed, None for single-speed."""
+        return self.gear_speeds[0] if self.gear_speeds else None
+
+    def get_gear(self, name: str) -> Optional[GearSpeed]:
+        """Look up a gear by name ('low', 'mid', 'high')."""
+        for g in self.gear_speeds:
+            if g.gear_name == name:
+                return g
+        return None
 
 
 EQUIPMENT_SPECS: Dict[str, 'EquipmentSpec'] = {
-    # ── Standard HXI ─────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # Standard HXI — NOV Hydraulic Top Drive
+    # Rineer vane motor, Sauer-Danfoss S90 variable pumps
+    # Single-speed helical gearbox, GE CPE305 PLC
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.HXI: EquipmentSpec(
         rated_hp=800, gear_ratio=10.5, num_speeds=1,
         max_torque_ftlbs=37_500, max_rpm=228,
         plc_platform="CPE305", word_swap=True,
+        drive_type="hydraulic",
+        motor_type="Rineer vane",
+        motor_displacement_cu_in=125.0,        # 125 cu.in/rev (~2048 cc)
+        pump_type="Sauer-Danfoss S90-130cc",
+        pump_displacement_cc=130.0,
+        num_pumps=2,
+        max_system_pressure_psi=5000,
+        nominal_operating_pressure_psi=3500,
+        overall_efficiency=0.85,
+        torque_cell_capacity_ftlbs=75_000,     # Sub-mounted strain gauge
+        encoder_cpr=1024,                      # BEI incremental encoder
+        hookload_capacity_tons=500,
     ),
-    # ── HXI High Torque (multi-speed gearbox) ────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # HXI High Torque — 3-speed gearbox variant
+    # Same Rineer vane motor & S90 pumps as HXI
+    # 3 gear ratios: Low 14.0:1, Mid 10.5:1, High 7.0:1
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.HXI_HT: EquipmentSpec(
         rated_hp=800, gear_ratio=14.0, num_speeds=3,
         max_torque_ftlbs=50_000, max_rpm=170,
         plc_platform="CPE305", word_swap=True,
+        drive_type="hydraulic",
+        motor_type="Rineer vane",
+        motor_displacement_cu_in=125.0,
+        pump_type="Sauer-Danfoss S90-130cc",
+        pump_displacement_cc=130.0,
+        num_pumps=2,
+        max_system_pressure_psi=5000,
+        nominal_operating_pressure_psi=3500,
+        overall_efficiency=0.85,
+        torque_cell_capacity_ftlbs=100_000,    # Higher capacity for HT
+        encoder_cpr=1024,
+        hookload_capacity_tons=500,
+        gear_speeds=[
+            GearSpeed("low",  14.0, 50_000, 170),   # Max torque, low RPM
+            GearSpeed("mid",  10.5, 37_500, 228),   # Standard HXI equivalent
+            GearSpeed("high",  7.0, 25_000, 340),   # High speed, low torque
+        ],
         max_intermittent_torque_ftlbs=75_000,
-        gearbox_inertia_kgm2=35.0,  # Heavier multi-speed gearbox
+        gearbox_inertia_kgm2=35.0,            # Heavier multi-speed gearbox
     ),
-    # ── HXI Smart Slide (same drivetrain as HXI, adds slide) ────
+    # ══════════════════════════════════════════════════════════════
+    # HXI Smart Slide — same drivetrain as HXI + slide system
+    # Adds drilling-with-slide pipe handling functionality
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.HXI_SMART_SLIDE: EquipmentSpec(
         rated_hp=800, gear_ratio=10.5, num_speeds=1,
         max_torque_ftlbs=37_500, max_rpm=228,
         plc_platform="CPE305", word_swap=True,
+        drive_type="hydraulic",
+        motor_type="Rineer vane",
+        motor_displacement_cu_in=125.0,
+        pump_type="Sauer-Danfoss S90-130cc",
+        pump_displacement_cc=130.0,
+        num_pumps=2,
+        max_system_pressure_psi=5000,
+        nominal_operating_pressure_psi=3500,
+        overall_efficiency=0.85,
+        torque_cell_capacity_ftlbs=75_000,
+        encoder_cpr=1024,
+        hookload_capacity_tons=500,
     ),
-    # ── EXI 800HP ────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # EXI 800HP — Electric Top Drive (AC induction + VFD)
+    # No hydraulic motor — torque via electric motor through gearbox
+    # GE CPE305 PLC, standard word-swapped FLOAT32
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.EXI: EquipmentSpec(
         rated_hp=800, gear_ratio=11.0, num_speeds=1,
-        max_torque_ftlbs=40_000, max_rpm=210,
+        max_torque_ftlbs=30_000, max_rpm=210,  # 30k continuous (not 40k)
         plc_platform="CPE305", word_swap=True,
+        drive_type="electric",
+        motor_type="AC induction + VFD",
+        overall_efficiency=0.92,               # Electric drivetrain higher η
+        torque_cell_capacity_ftlbs=60_000,
+        encoder_cpr=1024,
+        hookload_capacity_tons=500,
+        max_intermittent_torque_ftlbs=40_000,  # VFD burst (150% for 60s)
     ),
-    # ── FDS (Allen-Bradley CompactLogix) ─────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # FDS — Hydraulic, Allen-Bradley CompactLogix PLC
+    # Standard IEEE byte order (NO word swap)
+    # Lower HP unit (540HP), smaller gear ratio
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.FDS: EquipmentSpec(
-        rated_hp=800, gear_ratio=10.5, num_speeds=1,
-        max_torque_ftlbs=37_500, max_rpm=228,
-        plc_platform="CompactLogix", word_swap=False,  # AB = normal byte order
+        rated_hp=540, gear_ratio=10.5, num_speeds=1,
+        max_torque_ftlbs=25_000, max_rpm=228,  # 540HP/25k (not 800HP/37.5k)
+        plc_platform="CompactLogix", word_swap=False,  # AB = standard IEEE
+        drive_type="hydraulic",
+        motor_type="hydraulic vane",
+        motor_displacement_cu_in=100.0,        # Smaller motor
+        pump_type="variable piston",
+        pump_displacement_cc=100.0,
+        num_pumps=2,
+        max_system_pressure_psi=4500,
+        nominal_operating_pressure_psi=3000,
+        overall_efficiency=0.85,
+        torque_cell_capacity_ftlbs=50_000,
+        encoder_cpr=1024,
+        hookload_capacity_tons=350,
+        rotor_inertia_kgm2=8.0,
+        gearbox_inertia_kgm2=20.0,
     ),
-    # ── Rostel (GE Rx3i) ────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # Rostel — Hydraulic, GE Rx3i PLC
+    # 750HP, 10.0:1 gear ratio, 35k ft-lbs continuous
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.ROSTEL: EquipmentSpec(
         rated_hp=750, gear_ratio=10.0, num_speeds=1,
         max_torque_ftlbs=35_000, max_rpm=240,
-        plc_platform="Rx3i", word_swap=True,
+        plc_platform="Rx3i", word_swap=True,   # GE Rx3i = word-swapped
+        drive_type="hydraulic",
+        motor_type="hydraulic vane",
+        motor_displacement_cu_in=110.0,
+        pump_type="variable piston",
+        pump_displacement_cc=120.0,
+        num_pumps=2,
+        max_system_pressure_psi=5000,
+        nominal_operating_pressure_psi=3500,
+        overall_efficiency=0.85,
+        torque_cell_capacity_ftlbs=70_000,
+        encoder_cpr=1024,
+        hookload_capacity_tons=500,
     ),
-    # ── Warrior 250T ─────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # Warrior 250T — Hydraulic, GE CPE305 PLC
+    # 630HP (not 600), Parker-Denison T7 series pumps
+    # Compact frame, lower torque/hookload than HXI
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.WARRIOR: EquipmentSpec(
-        rated_hp=600, gear_ratio=9.0, num_speeds=1,
+        rated_hp=630, gear_ratio=9.0, num_speeds=1,
         max_torque_ftlbs=25_000, max_rpm=260,
         plc_platform="CPE305", word_swap=True,
-        rotor_inertia_kgm2=8.0,       # Smaller motor
+        drive_type="hydraulic",
+        motor_type="hydraulic vane",
+        motor_displacement_cu_in=90.0,
+        pump_type="Parker-Denison T7",
+        pump_displacement_cc=100.0,
+        num_pumps=2,
+        max_system_pressure_psi=4500,
+        nominal_operating_pressure_psi=3000,
+        overall_efficiency=0.83,               # Slightly lower η
+        torque_cell_capacity_ftlbs=50_000,
+        encoder_cpr=1024,
+        hookload_capacity_tons=250,            # 250-ton frame
+        rotor_inertia_kgm2=8.0,               # Smaller motor
         gearbox_inertia_kgm2=18.0,
     ),
-    # ── Smart Drive 900HP ────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # Smart Drive 900HP — Electric (AC induction + VFD)
+    # Highest HP in fleet, 42k ft-lbs continuous
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.SMART_DRIVE: EquipmentSpec(
         rated_hp=900, gear_ratio=10.5, num_speeds=1,
         max_torque_ftlbs=42_000, max_rpm=220,
         plc_platform="CPE305", word_swap=True,
+        drive_type="electric",
+        motor_type="AC induction + VFD",
+        overall_efficiency=0.92,
+        torque_cell_capacity_ftlbs=85_000,
+        encoder_cpr=1024,
+        hookload_capacity_tons=500,
+        max_intermittent_torque_ftlbs=63_000,  # VFD burst 150%
         rotor_inertia_kgm2=14.0,
         gearbox_inertia_kgm2=28.0,
     ),
-    # ── ECI ──────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # ECI — Electric, GE CPE305 PLC
+    # Similar frame to HXI but electric drive
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.ECI: EquipmentSpec(
         rated_hp=800, gear_ratio=10.5, num_speeds=1,
         max_torque_ftlbs=37_500, max_rpm=228,
         plc_platform="CPE305", word_swap=True,
+        drive_type="electric",
+        motor_type="AC induction + VFD",
+        overall_efficiency=0.92,
+        torque_cell_capacity_ftlbs=75_000,
+        encoder_cpr=1024,
+        hookload_capacity_tons=500,
     ),
-    # ── EMI 400 ──────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # EMI 400 — Electric, smaller frame
+    # 400HP, 8.0:1 gear ratio, 15k ft-lbs continuous
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.EMI: EquipmentSpec(
         rated_hp=400, gear_ratio=8.0, num_speeds=1,
-        max_torque_ftlbs=18_000, max_rpm=300,
+        max_torque_ftlbs=15_000, max_rpm=300,  # 15k (not 18k)
         plc_platform="CPE305", word_swap=True,
+        drive_type="electric",
+        motor_type="AC induction + VFD",
+        overall_efficiency=0.90,
+        torque_cell_capacity_ftlbs=30_000,
+        encoder_cpr=1024,
+        hookload_capacity_tons=250,
+        max_intermittent_torque_ftlbs=22_500,
         rotor_inertia_kgm2=6.0,
         gearbox_inertia_kgm2=12.0,
     ),
-    # ── Shop / Commissioning Unit ────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # Shop / Commissioning Unit — defaults to HXI specs
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.SHOP_UNIT: EquipmentSpec(
         rated_hp=800, gear_ratio=10.5, num_speeds=1,
         max_torque_ftlbs=37_500, max_rpm=228,
         plc_platform="CPE305", word_swap=True,
+        drive_type="hydraulic",
+        motor_type="Rineer vane",
+        motor_displacement_cu_in=125.0,
+        overall_efficiency=0.85,
     ),
-    # ── Unknown / fallback ───────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # Unknown / fallback — conservative HXI-like defaults
+    # ══════════════════════════════════════════════════════════════
     EquipmentType.UNKNOWN: EquipmentSpec(
         rated_hp=800, gear_ratio=10.5, num_speeds=1,
         max_torque_ftlbs=37_500, max_rpm=228,
         plc_platform="CPE305", word_swap=True,
+        drive_type="hydraulic",
+        overall_efficiency=0.85,
     ),
 }
 
@@ -1360,11 +1575,14 @@ class SimConfig:
         Overrides motor and gearbox parameters so synthetic data
         matches the torque-speed characteristics of the actual
         equipment variant (HXI vs HXI_HT vs Warrior, etc.).
+
+        For hydraulic drives: T = P × D × GR × η / (2π)
+        For electric drives:  T = HP × 5252 / RPM × GR × η
         """
         spec = EQUIPMENT_SPECS.get(eq_type)
         if spec is None:
             return
-        # Motor
+        # Motor HP & base speed
         self.top_drive.motor.rated_hp = spec.rated_hp
         self.top_drive.motor.rated_rpm = spec.rated_motor_rpm
         self.top_drive.motor.rated_torque_nm = (
@@ -1377,6 +1595,12 @@ class SimConfig:
         self.top_drive.max_continuous_torque_ftlbs = spec.max_torque_ftlbs
         self.top_drive.max_intermittent_torque_ftlbs = spec.max_intermittent_torque_ftlbs
         self.top_drive.gearbox_inertia_kgm2 = spec.gearbox_inertia_kgm2
+        self.top_drive.gearbox_efficiency = spec.overall_efficiency
+        # Encoder
+        if spec.encoder_cpr > 0:
+            self.top_drive.quill_encoder_cpr = spec.encoder_cpr
+        # Hookload
+        self.top_drive.hoist_capacity_tons = spec.hookload_capacity_tons
 
     def apply_machine_noise_profile(self):
         """Override sensor noise defaults with machine-type-specific values."""
