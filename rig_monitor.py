@@ -1172,6 +1172,15 @@ def cmd_install():
     subprocess.run([python_exe, "-m", "pip", "install", "rich", "--quiet"],
                    check=False)
 
+    # Write pythonw_path.txt so VBS can find the right pythonw.exe
+    pythonw_exe = Path(python_exe).parent / "pythonw.exe"
+    config_path = script_dir / "pythonw_path.txt"
+    if pythonw_exe.exists():
+        config_path.write_text(str(pythonw_exe) + "\n")
+        print(f"  Pythonw: {pythonw_exe}")
+    else:
+        print(f"  Warning: pythonw.exe not found at {pythonw_exe}")
+
     # Create shortcut in Startup folder
     startup_dir = Path(os.environ.get("APPDATA", "")) / \
         "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
@@ -1186,7 +1195,7 @@ def cmd_install():
         f'$s.Description = "TopDrive AI Rig Monitor"; '
         f'$s.Save()'
     )
-    result = subprocess.run(
+    subprocess.run(
         ["powershell", "-NoProfile", "-Command", ps_cmd],
         capture_output=True, text=True,
     )
@@ -1200,9 +1209,10 @@ def cmd_install():
         print(f"  To stop:           python rig_monitor.py --stop")
         print(f"  To uninstall:      python rig_monitor.py --uninstall")
     else:
-        print(f"\n  FAILED to create startup shortcut.")
+        print(f"\n  WARNING: Could not create startup shortcut.")
         print(f"  Try manually copying start_hidden.vbs to:")
         print(f"    {startup_dir}")
+        print(f"\n  The service will still work if you double-click start_hidden.vbs")
 
 
 def cmd_uninstall():

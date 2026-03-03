@@ -38,10 +38,11 @@ if exist "%SHORTCUT%" (
 echo.
 
 REM Step 4: Clean up stale files
-echo  [4/4] Cleaning stale status files...
+echo  [4/4] Cleaning stale files...
 cd /d "%~dp0"
 if exist monitor_status.json del monitor_status.json
 if exist monitor_stop.signal del monitor_stop.signal
+if exist pythonw_path.txt del pythonw_path.txt
 echo  Done.
 echo.
 
