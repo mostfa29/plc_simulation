@@ -105,7 +105,11 @@ class MachineProfile:
                     description=rdef.get('description', ''),
                 )
 
-        return MachineProfile(reg_map=reg_map, **data)
+        # Filter out unknown fields (e.g. status, description, firmware from fleet YAML)
+        import dataclasses
+        known_fields = {f.name for f in dataclasses.fields(MachineProfile)}
+        filtered = {k: v for k, v in data.items() if k in known_fields}
+        return MachineProfile(reg_map=reg_map, **filtered)
 
     def to_yaml(self, path: str):
         """Save this MachineProfile to a YAML file."""

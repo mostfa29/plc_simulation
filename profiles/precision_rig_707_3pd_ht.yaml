@@ -9,7 +9,7 @@ description: "HXI HT"
 firmware: "14.2s0"
 
 # Modbus connection (fill in when discovered)
-plc_ip: ""
+plc_ip: "129.168.1.25"
 plc_port: 502
 unit_id: 0
 word_swap: true
