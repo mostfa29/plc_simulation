@@ -1111,6 +1111,7 @@ def run_capture(args):
     word_swap = True   # Default: GE CPE305 convention
     profile_name = "default"
     unit_id = 1  # Default Modbus unit ID
+    loaded_profile = None  # track loaded profile for physics mapper
 
     if hasattr(args, 'profile') and args.profile:
         # Load from MachineProfile YAML
@@ -1119,6 +1120,7 @@ def run_capture(args):
             reg_map, word_swap = reg_map_from_profile(profile)
             profile_name = profile.name
             unit_id = profile.unit_id
+            loaded_profile = profile
             print(f"  Loaded machine profile: {profile.name} ({args.profile})")
         except Exception as e:
             print(f"  WARNING: Failed to load profile {args.profile}: {e}")
@@ -1136,8 +1138,45 @@ def run_capture(args):
             reg_map, word_swap = reg_map_from_profile(auto_profile)
             profile_name = auto_profile.name
             unit_id = auto_profile.unit_id
+            loaded_profile = auto_profile
             print(f"  Auto-detected profile: {auto_profile.name} "
                   f"(matched IP {args.host})")
+
+    # If profile found but reg_map is empty, try physics-based auto-mapping
+    if not reg_map and loaded_profile:
+        try:
+            from physics_mapper import auto_map_registers
+            eq_type = loaded_profile.equipment_type or "unknown"
+            print(f"\n  Profile '{loaded_profile.name}' has no register map "
+                  f"(type={eq_type})")
+            print(f"  Running physics-based auto-mapper...")
+            physics_reg_map = auto_map_registers(
+                ip=args.host,
+                port=getattr(args, 'port', 502),
+                unit_id=loaded_profile.unit_id,
+                equipment_type=eq_type,
+                profile=loaded_profile,
+                passes=6, delay=2.0,
+                min_confidence=0.20,
+            )
+            if physics_reg_map:
+                # Convert RegisterDef dict to capture format
+                loaded_profile.reg_map = physics_reg_map
+                reg_map, word_swap = reg_map_from_profile(loaded_profile)
+                profile_name = loaded_profile.name
+                unit_id = loaded_profile.unit_id
+                print(f"  Physics mapper: {len(physics_reg_map)} registers auto-mapped")
+                # Save updated profile so next run uses cached map
+                try:
+                    prof_path = f"profiles/{loaded_profile.name}.yaml"
+                    loaded_profile.to_yaml(prof_path)
+                    print(f"  Saved updated profile: {prof_path}")
+                except Exception:
+                    pass  # non-critical, capture continues
+        except ImportError:
+            pass  # physics_mapper not available, fall through to default
+        except Exception as e:
+            print(f"  Physics mapper failed: {e} — falling back to default")
 
     if not reg_map:
         reg_map = DEFAULT_REGISTER_MAP
@@ -2103,6 +2142,28 @@ def _create_rig_profile(ip: str, port: int, device_name: str,
                 description=rdef.get("description", ""),
             )
 
+    # No template? Try physics-based auto-mapping (live scan)
+    if not reg_map:
+        try:
+            from physics_mapper import auto_map_registers
+            print(f"    {ip} — No template for '{equipment_type}', "
+                  f"running physics auto-mapper...")
+            physics_reg_map = auto_map_registers(
+                ip=ip, port=port, unit_id=unit_id,
+                equipment_type=equipment_type,
+                passes=6, delay=2.0,
+                min_confidence=0.20,
+                quiet=True,
+            )
+            if physics_reg_map:
+                reg_map = physics_reg_map
+                n = len(reg_map)
+                print(f"    {ip} — Physics mapper: {n} registers auto-mapped")
+        except ImportError:
+            pass  # physics_mapper not available
+        except Exception as e:
+            print(f"    {ip} — Physics mapper failed: {e}")
+
     profile = MachineProfile(
         name=prof_name,
         plc_ip=ip,
@@ -2118,7 +2179,12 @@ def _create_rig_profile(ip: str, port: int, device_name: str,
     out_path = Path(profile_dir) / f"{prof_name}.yaml"
     profile.to_yaml(str(out_path))
 
-    tmpl_str = f"template={equipment_type}" if template else "no template (will scan)"
+    if template:
+        tmpl_str = f"template={equipment_type}"
+    elif reg_map:
+        tmpl_str = f"physics-mapped ({len(reg_map)} regs)"
+    else:
+        tmpl_str = "no template, no PLC response (will scan later)"
     print(f"    {ip} — Created: {out_path.name} "
           f"(customer={customer}, type={equipment_type}, {tmpl_str})")
     return (str(out_path), profile)
