@@ -260,8 +260,10 @@ def build_dataset_index(manifest, scenario_ids, sensor_dir, class_map,
 
         if 'fault_class' in row.index and pd.notna(row['fault_class']):
             sc = int(row['fault_class'])
-        else:
+        elif 'scenario_type' in row.index and pd.notna(row.get('scenario_type')):
             sc = class_map.get(row['scenario_type'], 0)
+        else:
+            sc = 0
 
         windows, fc_windows = scenario_to_windows(
             fp, tt, et, window_size, stride, channels_mode=channels_mode)
@@ -322,7 +324,10 @@ class Phase1Dataset(Dataset):
 def create_splits(manifest, class_map, split_ratio=(0.70, 0.15, 0.15), seed=42):
     rng = np.random.RandomState(seed)
     manifest = manifest.copy()
-    manifest['fault_class'] = manifest['scenario_type'].map(class_map).fillna(0).astype(int)
+    if 'fault_class' not in manifest.columns:
+        manifest['fault_class'] = manifest['scenario_type'].map(class_map).fillna(0).astype(int)
+    else:
+        manifest['fault_class'] = manifest['fault_class'].fillna(0).astype(int)
     class_groups = manifest.groupby('fault_class')['scenario_id'].apply(list).to_dict()
 
     train_ids, val_ids, test_ids = [], [], []
