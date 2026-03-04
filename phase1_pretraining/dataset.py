@@ -371,6 +371,14 @@ def prepare_datasets(dataset_dir, class_map, window_size=2000, stride=1000,
     if 'scenario_id' not in manifest.columns:
         manifest['scenario_id'] = range(len(manifest))
 
+    # Normalize column names from generate_dataset.py format
+    if 'fault_class' not in manifest.columns and 'ground_truth_class' in manifest.columns:
+        manifest['fault_class'] = manifest['ground_truth_class']
+        logger.info("Mapped 'ground_truth_class' -> 'fault_class'")
+    if 'scenario_type' not in manifest.columns and 'ground_truth_label' in manifest.columns:
+        manifest['scenario_type'] = manifest['ground_truth_label']
+        logger.info("Mapped 'ground_truth_label' -> 'scenario_type'")
+
     print(f"Channel mode: {channels_mode} ({num_channels} channels)")
 
     train_ids, val_ids, test_ids = create_splits(manifest, class_map, split_ratio, split_seed)
