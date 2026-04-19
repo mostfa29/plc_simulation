@@ -72,6 +72,8 @@ def atomic_write_json(path: Path, data: dict):
     try:
         with os.fdopen(tmp_fd, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())  # crash-safety: required before rename
         os.replace(tmp_path, str(path))
     except Exception:
         try:

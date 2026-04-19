@@ -1,0 +1,15 @@
+{
+  "gate_lower": 0,
+  "gate_upper": 0,
+  "gate_state": "BASELINE",
+  "lkg_lower": 0,
+  "lkg_upper": 0,
+  "lkg_iae": Infinity,
+  "consecutive_rejections": 0,
+  "advisor_trim_upper": 0.0,
+  "advisor_trim_lower": 0.0,
+  "advisor_total_adaptations": 0,
+  "metrics_dniae": 0.9620118569572933,
+  "metrics_mode": "BIAS",
+  "_saved_at": 1776575634.4829493
+}

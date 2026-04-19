@@ -1,6 +1,9 @@
 """
 Modbus TCP Server: The Interface Layer
 ========================================
+SIMULATOR ONLY — DO NOT IMPORT INTO hxi_optimizer/ PRODUCTION CODE.
+Default bind address is 127.0.0.1 (loopback) to prevent accidental LAN exposure.
+
 Zero-dependency implementation using only Python stdlib.
 
 Register map matches Section 5.1.1 of the reference document exactly:
@@ -181,7 +184,7 @@ class ModbusTCPServer:
         server = ModbusTCPServer(cfg, profile=my_profile)
     """
 
-    def __init__(self, cfg: SimConfig, host: str = '0.0.0.0', port: int = 502,
+    def __init__(self, cfg: SimConfig, host: str = '127.0.0.1', port: int = 502,
                  profile: Optional[MachineProfile] = None):
         self.cfg = cfg
         self.host = host

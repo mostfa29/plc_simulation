@@ -1,0 +1,25 @@
+{
+  "plc_host": "127.0.0.1",
+  "plc_port": 5020,
+  "unit_id": 1,
+  "modbus_timeout": 2.0,
+  "read_start_addr": 6599,
+  "read_count": 28,
+  "read_interval": 0.5,
+  "analysis_interval": 10.0,
+  "write_interval": 10.0,
+  "nominal_setpoint": 60.0,
+  "deadband_rpm": 2.0,
+  "phase": "A",
+  "safety": {
+    "abs_min_lower": 50,
+    "abs_max_lower": 700,
+    "abs_min_upper": 300,
+    "abs_max_upper": 950,
+    "min_band_counts": 50
+  },
+  "osc_enabled": false,
+  "drill_depth_ft": 3000.0,
+  "pdm_motor_constant": null,
+  "require_verified_word_order": false
+}

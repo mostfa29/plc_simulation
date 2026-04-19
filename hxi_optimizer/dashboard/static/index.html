@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HXI Optimizer Dashboard</title>
+<style>
+:root {
+  --bg: #0a0e17;
+  --card: #111827;
+  --border: #1e293b;
+  --text: #e2e8f0;
+  --dim: #64748b;
+  --accent: #3b82f6;
+  --green: #22c55e;
+  --yellow: #eab308;
+  --red: #ef4444;
+  --orange: #f97316;
+  --cyan: #06b6d4;
+  --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; overflow-x: hidden; }
+a { color: var(--accent); }
+
+/* ── Header ─── */
+.header { background: var(--card); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+.header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+.header h1 span { color: var(--accent); }
+.conn-badge { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.conn-dot { width: 10px; height: 10px; border-radius: 50%; }
+.conn-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.conn-dot.warn { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+.conn-dot.err { background: var(--red); box-shadow: 0 0 6px var(--red); }
+
+/* ── Layout ─── */
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; padding: 16px 24px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
+.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--dim); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.card h2 .icon { font-size: 16px; }
+
+/* ── KPI Rows ─── */
+.kpi-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+.kpi { flex: 1; min-width: 90px; }
+.kpi-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; }
+.kpi-value { font-size: 22px; font-weight: 700; font-family: var(--mono); margin-top: 2px; }
+.kpi-value.small { font-size: 16px; }
+.kpi-unit { font-size: 11px; color: var(--dim); font-weight: 400; }
+
+/* ── State badge ─── */
+.state-badge { display: inline-block; padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; font-family: var(--mono); letter-spacing: 0.5px; }
+.state-BASELINE { background: #1e3a5f; color: var(--accent); }
+.state-TRIAL { background: #422006; color: var(--orange); }
+.state-ACCEPTED { background: #14532d; color: var(--green); }
+.state-DISABLED { background: #1c1917; color: var(--dim); }
+.state-ESD { background: #450a0a; color: var(--red); animation: pulse 1s infinite; }
+.state-REJECTED { background: #451a03; color: var(--yellow); }
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+/* ── Phase badge ─── */
+.phase-badge { display: inline-block; padding: 3px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; font-family: var(--mono); }
+.phase-A { background: #1e293b; color: var(--dim); }
+.phase-B { background: #1e3a5f; color: var(--cyan); }
+.phase-C { background: #422006; color: var(--orange); }
+.phase-D { background: #14532d; color: var(--green); }
+
+/* ── Failure mode ─── */
+.mode-NORMAL { color: var(--green); }
+.mode-BIAS { color: var(--yellow); }
+.mode-OSCILLATION { color: var(--orange); }
+.mode-DEADBAND_HUNTING { color: var(--orange); }
+.mode-SLUGGISH { color: var(--yellow); }
+.mode-INSUFFICIENT_DATA { color: var(--dim); }
+
+/* ── Bar gauge ─── */
+.bar-gauge { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 4px 0; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s ease; }
+.bar-fill.green { background: var(--green); }
+.bar-fill.yellow { background: var(--yellow); }
+.bar-fill.orange { background: var(--orange); }
+.bar-fill.red { background: var(--red); }
+
+/* ── Controls ─── */
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.15s; }
+.btn:hover { border-color: var(--accent); background: #1e293b; }
+.btn.danger { border-color: var(--red); color: var(--red); }
+.btn.danger:hover { background: #450a0a; }
+.btn.success { border-color: var(--green); color: var(--green); }
+.btn.success:hover { background: #14532d; }
+.btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+/* ─�� Input ─── */
+.input-group { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.input-group input, .input-group select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 13px; width: 100px; }
+
+/* ��─ Audit table ─── */
+.audit-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--mono); margin-top: 8px; }
+.audit-table th { text-align: left; padding: 4px 8px; color: var(--dim); font-weight: 500; border-bottom: 1px solid var(--border); }
+.audit-table td { padding: 4px 8px; border-bottom: 1px solid #0f172a; }
+.audit-table .evt-WRITE { color: var(--green); }
+.audit-table .evt-REJECTED { color: var(--yellow); }
+.audit-table .evt-ROLLBACK { color: var(--red); }
+.audit-table .evt-ESD_FREEZE { color: var(--red); font-weight: 700; }
+.audit-table .evt-ACCEPTED { color: var(--cyan); }
+
+/* ── Swash bar ─── */
+.swash-bar { position: relative; height: 32px; background: var(--bg); border-radius: 6px; margin: 8px 0; overflow: hidden; border: 1px solid var(--border); }
+.swash-zone { position: absolute; top: 0; height: 100%; opacity: 0.2; }
+.swash-zone.active { background: var(--green); }
+.swash-marker { position: absolute; top: 0; width: 3px; height: 100%; border-radius: 2px; }
+.swash-marker.output { background: var(--accent); }
+.swash-marker.lower { background: var(--red); opacity: 0.7; }
+.swash-marker.upper { background: var(--red); opacity: 0.7; }
+
+/* ── Scrollable ─── */
+.scroll-box { max-height: 300px; overflow-y: auto; }
+.scroll-box::-webkit-scrollbar { width: 6px; }
+.scroll-box::-webkit-scrollbar-track { background: var(--bg); }
+.scroll-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Temp ─── */
+.temp-ok { color: var(--green); }
+.temp-warn { color: var(--yellow); }
+.temp-danger { color: var(--red); }
+
+.full-width { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══ -->
+<div class="header">
+  <h1><span>HXI</span> Optimizer Dashboard</h1>
+  <div class="conn-badge">
+    <div class="conn-dot" id="connDot"></div>
+    <span id="connLabel">Connecting...</span>
+    <span class="phase-badge" id="phaseBadge">--</span>
+    <span class="state-badge" id="stateBadge">--</span>
+  </div>
+</div>
+
+<!-- ═══ GRID ═══ -->
+<div class="grid">
+
+  <!-- ── Live RPM + Swash ── -->
+  <div class="card">
+    <h2><span class="icon">&#9201;</span> Live Telemetry</h2>
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">RPM</div>
+        <div class="kpi-value" id="liveRpm">--</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Setpoint</div>
+        <div class="kpi-value small" id="liveSetpoint">--</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Error</div>
+        <div class="kpi-value small" id="liveError">-- <span class="kpi-unit">RPM</span></div>
+      </div>
+    </div>
+    <div class="kpi-label" style="margin-top:8px">Swash Position</div>
+    <div class="swash-bar" id="swashBar">
+      <div class="swash-zone active" id="swashZone"></div>
+      <div class="swash-marker lower" id="swashLower" title="Lower bound"></div>
+      <div class="swash-marker upper" id="swashUpper" title="Upper bound"></div>
+      <div class="swash-marker output" id="swashOutput" title="Swash output"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim)">
+      <span>Lower: <b id="lblLower">--</b></span>
+      <span>Output: <b id="lblOutput">--</b></span>
+      <span>Upper: <b id="lblUpper">--</b></span>
+    </div>
+  </div>
+
+  <!-- ── Performance Metrics ── -->
+  <div class="card">
+    <h2><span class="icon">&#9899;</span> Performance</h2>
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">DNIAE</div>
+        <div class="kpi-value" id="metDniae">--</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Mode</div>
+        <div class="kpi-value small" id="metMode">--</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">RMSE</div>
+        <div class="kpi-value small" id="metRmse">-- <span class="kpi-unit">RPM</span></div>
+      </div>
+    </div>
+    <div class="kpi-label" style="margin-top:10px">Saturation</div>
+    <div style="display:flex;gap:12px;align-items:center;margin-top:4px">
+      <span style="font-size:11px;color:var(--dim);width:40px">Upper</span>
+      <div class="bar-gauge" style="flex:1"><div class="bar-fill" id="satUpperBar"></div></div>
+      <span style="font-size:12px;font-family:var(--mono);width:40px" id="satUpperPct">0%</span>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center;margin-top:4px">
+      <span style="font-size:11px;color:var(--dim);width:40px">Lower</span>
+      <div class="bar-gauge" style="flex:1"><div class="bar-fill" id="satLowerBar"></div></div>
+      <span style="font-size:12px;font-family:var(--mono);width:40px" id="satLowerPct">0%</span>
+    </div>
+    <div style="display:flex;gap:16px;margin-top:10px;font-size:12px">
+      <span>Windup: <b id="metWindup">--</b></span>
+      <span>Change: <b id="metChange">--</b></span>
+      <span>Valid: <b id="metValid">--</b>/40</span>
+    </div>
+  </div>
+
+  <!-- ── Safety Gate ── -->
+  <div class="card">
+    <h2><span class="icon">&#128274;</span> Safety Gate</h2>
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">State</div>
+        <div class="kpi-value small"><span class="state-badge" id="gateState">--</span></div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Rejections</div>
+        <div class="kpi-value" id="gateRej">0</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Heartbeat</div>
+        <div class="kpi-value small" id="gateHb">0</div>
+      </div>
+    </div>
+    <div class="kpi-row" style="margin-top:8px">
+      <div class="kpi">
+        <div class="kpi-label">Cooldown</div>
+        <div class="kpi-value small" id="gateCooldown">0s</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">ESD</div>
+        <div class="kpi-value small" id="gateEsd">--</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Bump Lock</div>
+        <div class="kpi-value small" id="gateBump">--</div>
+      </div>
+    </div>
+    <div class="kpi-label" style="margin-top:10px">Last Known Good</div>
+    <div style="font-family:var(--mono);font-size:13px;margin-top:4px">
+      [<span id="lkgLower">--</span>, <span id="lkgUpper">--</span>]
+      <span style="color:var(--dim)">IAE=<span id="lkgIae">--</span></span>
+    </div>
+  </div>
+
+  <!-- ── Adaptation ── -->
+  <div class="card">
+    <h2><span class="icon">&#9881;</span> Adaptation</h2>
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">Trim Upper</div>
+        <div class="kpi-value small" id="advTrimUp">0.00</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Trim Lower</div>
+        <div class="kpi-value small" id="advTrimLo">0.00</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Dwell</div>
+        <div class="kpi-value small" id="advDwell">0.0 <span class="kpi-unit">/ 20s</span></div>
+      </div>
+    </div>
+    <div style="margin-top:8px;font-size:12px">
+      Total adaptations: <b id="advTotal">0</b>
+    </div>
+    <div class="kpi-label" style="margin-top:12px">Hydraulic Temp</div>
+    <div class="kpi-value small" id="liveTemp">-- <span class="kpi-unit">&deg;C</span></div>
+  </div>
+
+  <!-- ── Operator Controls ── -->
+  <div class="card">
+    <h2><span class="icon">&#9889;</span> Operator Controls</h2>
+    <div style="font-size:13px;margin-bottom:8px">Adaptive is currently: <b id="ctrlStateLabel">--</b></div>
+    <div class="btn-row">
+      <button class="btn success" id="btnEnable" onclick="apiPost('/api/control/enable')">Enable Adaptive</button>
+      <button class="btn danger" id="btnDisable" onclick="apiPost('/api/control/disable')">Disable Adaptive</button>
+    </div>
+    <div class="input-group" style="margin-top:16px">
+      <span style="font-size:13px">Phase:</span>
+      <select id="phaseSelect">
+        <option value="A">A - Observer</option>
+        <option value="B">B - Advisory</option>
+        <option value="C">C - Limited Writes</option>
+        <option value="D">D - Full Authority</option>
+      </select>
+      <button class="btn" onclick="setPhase()">Set</button>
+    </div>
+    <div class="input-group" style="margin-top:8px">
+      <span style="font-size:13px">Depth (ft):</span>
+      <input type="number" id="depthInput" value="3000" min="100" step="100">
+      <button class="btn" onclick="setDepth()">Set</button>
+    </div>
+  </div>
+
+  <!-- ── Connection Info ── -->
+  <div class="card">
+    <h2><span class="icon">&#128268;</span> Connection</h2>
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">PLC Host</div>
+        <div class="kpi-value small" id="cfgHost">--</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Deadband</div>
+        <div class="kpi-value small" id="cfgDeadband">-- <span class="kpi-unit">RPM</span></div>
+      </div>
+    </div>
+    <div style="margin-top:8px;font-size:12px;color:var(--dim)">
+      WebSocket: <span id="wsStatus">connecting...</span>
+      &middot; Last update: <span id="wsAge">--</span>
+    </div>
+  </div>
+
+  <!-- ── Register Scanner ── -->
+  <div class="card full-width">
+    <h2><span class="icon">&#128270;</span> Register Scanner
+      <button class="btn" style="margin-left:auto;font-size:11px;padding:3px 10px" onclick="loadRegisters()">Load Map</button>
+      <button class="btn success" style="font-size:11px;padding:3px 10px;margin-left:4px" onclick="scanRegisters()">Live Scan</button>
+    </h2>
+    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+      <select id="regSectionFilter" onchange="filterRegisters()" style="padding:4px 8px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:4px;font-size:12px">
+        <option value="all">All Sections</option>
+      </select>
+      <label style="font-size:12px;display:flex;align-items:center;gap:4px">
+        <input type="checkbox" id="regHideSpare" onchange="filterRegisters()" checked> Hide Spare
+      </label>
+      <span style="font-size:12px;color:var(--dim)" id="regCount">--</span>
+    </div>
+    <div class="scroll-box" style="max-height:400px">
+      <table class="audit-table" style="font-size:11px">
+        <thead><tr><th>Address</th><th>Name</th><th>Type</th><th>Bit</th><th>Section</th><th>Value</th><th>Raw</th></tr></thead>
+        <tbody id="regBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Simulation Sandbox ── -->
+  <div class="card full-width">
+    <h2><span class="icon">&#127919;</span> Simulation Sandbox</h2>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+      <div>
+        <div class="kpi-label">Scenario</div>
+        <select id="simScenario" style="padding:6px 10px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:6px;font-family:var(--mono);font-size:13px;min-width:180px">
+          <option value="normal">Normal Drilling</option>
+          <option value="bias">Bias Event</option>
+          <option value="oscillation">Oscillation</option>
+          <option value="stickslip">Stick-Slip</option>
+          <option value="formation_change">Formation Change</option>
+          <option value="sluggish">Sluggish Response</option>
+          <option value="windup">Integral Windup</option>
+          <option value="deadband_hunting">Deadband Hunting</option>
+          <option value="connection">Pipe Connection</option>
+        </select>
+      </div>
+      <div>
+        <div class="kpi-label">Duration (s)</div>
+        <input type="number" id="simDuration" value="300" min="30" max="600" step="30" style="padding:6px 10px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:6px;font-family:var(--mono);font-size:13px;width:80px">
+      </div>
+      <div>
+        <div class="kpi-label">Setpoint (RPM)</div>
+        <input type="number" id="simSetpoint" value="60" min="0" max="220" step="10" style="padding:6px 10px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:6px;font-family:var(--mono);font-size:13px;width:80px">
+      </div>
+      <button class="btn success" onclick="runSimulation()" id="simRunBtn">Run Simulation</button>
+    </div>
+    <div id="simResults" style="display:none;margin-top:16px">
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">Samples</div><div class="kpi-value small" id="simSamples">--</div></div>
+        <div class="kpi"><div class="kpi-label">Labels</div><div class="kpi-value small" id="simLabels" style="font-size:12px">--</div></div>
+      </div>
+      <div style="margin-top:12px">
+        <div class="kpi-label">Performance Metrics Over Time</div>
+        <div class="scroll-box" style="max-height:250px;margin-top:4px">
+          <table class="audit-table" style="font-size:11px">
+            <thead><tr><th>Time</th><th>DNIAE</th><th>Mode</th><th>Conf</th><th>RMSE</th><th>Sat%</th><th>Windup</th><th>Change</th></tr></thead>
+            <tbody id="simMetricsBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div style="margin-top:12px">
+        <div class="kpi-label">RPM vs Setpoint</div>
+        <canvas id="simChart" height="150" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-top:4px"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Audit Log ── -->
+  <div class="card full-width">
+    <h2><span class="icon">&#128220;</span> Audit Trail <button class="btn" style="margin-left:auto;font-size:11px;padding:3px 10px" onclick="loadAudit()">Refresh</button></h2>
+    <div class="scroll-box">
+      <table class="audit-table">
+        <thead><tr><th>Time</th><th>Event</th><th>Old</th><th>New</th><th>State</th><th>Reason</th><th>HB</th><th>Rej</th></tr></thead>
+        <tbody id="auditBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// WebSocket connection + UI update loop
+// ═══════════════════════════════════════════════════════════════════════════
+
+let ws = null;
+let lastUpdate = 0;
+const SWASH_MIN = 0, SWASH_MAX = 1000;
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => { document.getElementById('wsStatus').textContent = 'connected'; };
+  ws.onclose = () => {
+    document.getElementById('wsStatus').textContent = 'disconnected';
+    document.getElementById('connDot').className = 'conn-dot err';
+    setTimeout(connectWS, 2000);
+  };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (evt) => {
+    const d = JSON.parse(evt.data);
+    lastUpdate = Date.now();
+    updateUI(d);
+  };
+}
+
+function updateUI(d) {
+  // Connection
+  const conn = d.connection || {};
+  const dot = document.getElementById('connDot');
+  const label = document.getElementById('connLabel');
+  if (conn.healthy) { dot.className='conn-dot ok'; label.textContent='Connected'; }
+  else if (conn.connected) { dot.className='conn-dot warn'; label.textContent=`Degraded (${conn.consecutive_failures} fails)`; }
+  else { dot.className='conn-dot err'; label.textContent='Disconnected'; }
+
+  // Phase + State badges
+  const pb = document.getElementById('phaseBadge');
+  pb.textContent = 'Phase ' + d.phase;
+  pb.className = 'phase-badge phase-' + d.phase;
+  const sb = document.getElementById('stateBadge');
+  sb.textContent = d.state_machine;
+  sb.className = 'state-badge state-' + d.state_machine;
+  document.getElementById('gateState').textContent = d.state_machine;
+  document.getElementById('gateState').className = 'state-badge state-' + d.state_machine;
+
+  // Live telemetry
+  const live = d.live || {};
+  const rpm = live.rpm || 0;
+  const sp = live.setpoint || 0;
+  document.getElementById('liveRpm').textContent = rpm.toFixed(1);
+  document.getElementById('liveSetpoint').textContent = sp.toFixed(1);
+  document.getElementById('liveError').innerHTML = (sp - rpm).toFixed(1) + ' <span class="kpi-unit">RPM</span>';
+
+  // Swash bar
+  const lo = live.active_lower || 0, up = live.active_upper || 0, out = live.swash_output || 0;
+  const pct = v => Math.max(0, Math.min(100, (v - SWASH_MIN) / (SWASH_MAX - SWASH_MIN) * 100));
+  document.getElementById('swashZone').style.left = pct(lo) + '%';
+  document.getElementById('swashZone').style.width = (pct(up) - pct(lo)) + '%';
+  document.getElementById('swashLower').style.left = pct(lo) + '%';
+  document.getElementById('swashUpper').style.left = pct(up) + '%';
+  document.getElementById('swashOutput').style.left = pct(out) + '%';
+  document.getElementById('lblLower').textContent = lo;
+  document.getElementById('lblOutput').textContent = out;
+  document.getElementById('lblUpper').textContent = up;
+
+  // Temp
+  const temp = live.loop_temp || 0;
+  const tempEl = document.getElementById('liveTemp');
+  tempEl.innerHTML = temp.toFixed(1) + ' <span class="kpi-unit">&deg;C</span>';
+  tempEl.className = 'kpi-value small ' + (temp > 80 ? 'temp-danger' : temp > 60 ? 'temp-warn' : 'temp-ok');
+
+  // Metrics
+  const met = d.metrics || {};
+  document.getElementById('metDniae').textContent = (met.dniae !== undefined) ? met.dniae.toFixed(4) : '--';
+  const modeEl = document.getElementById('metMode');
+  modeEl.textContent = met.failure_mode || '--';
+  modeEl.className = 'kpi-value small mode-' + (met.failure_mode || '');
+  document.getElementById('metRmse').innerHTML = ((met.rmse_rpm || 0).toFixed(2)) + ' <span class="kpi-unit">RPM</span>';
+
+  // Saturation bars
+  setSatBar('satUpperBar', 'satUpperPct', met.sat_upper || 0);
+  setSatBar('satLowerBar', 'satLowerPct', met.sat_lower || 0);
+
+  document.getElementById('metWindup').textContent = met.is_windup ? 'YES' : 'No';
+  document.getElementById('metWindup').style.color = met.is_windup ? 'var(--red)' : 'var(--green)';
+  document.getElementById('metChange').textContent = met.change_detected ? (met.change_reason || 'YES') : 'No';
+  document.getElementById('metChange').style.color = met.change_detected ? 'var(--orange)' : 'var(--green)';
+  document.getElementById('metValid').textContent = met.n_valid || 0;
+
+  // Safety
+  const safety = d.safety || {};
+  document.getElementById('gateRej').textContent = safety.consecutive_rejections || 0;
+  document.getElementById('gateHb').textContent = safety.heartbeat_counter || 0;
+  document.getElementById('gateCooldown').textContent = (safety.cooldown_remaining || 0).toFixed(0) + 's';
+  const esdEl = document.getElementById('gateEsd');
+  esdEl.textContent = safety.esd_active ? 'ACTIVE' : 'Clear';
+  esdEl.style.color = safety.esd_active ? 'var(--red)' : 'var(--green)';
+  const bumpEl = document.getElementById('gateBump');
+  bumpEl.textContent = safety.bump_lockout ? 'LOCKED' : 'Clear';
+  bumpEl.style.color = safety.bump_lockout ? 'var(--yellow)' : 'var(--green)';
+
+  // LKG
+  const bounds = d.bounds || {};
+  document.getElementById('lkgLower').textContent = bounds.lkg_lower || 0;
+  document.getElementById('lkgUpper').textContent = bounds.lkg_upper || 0;
+  document.getElementById('lkgIae').textContent = (bounds.lkg_iae !== undefined && bounds.lkg_iae < 1e6) ? bounds.lkg_iae.toFixed(4) : 'inf';
+
+  // Advisor
+  const adv = d.advisor || {};
+  document.getElementById('advTrimUp').textContent = (adv.trim_upper || 0).toFixed(2);
+  document.getElementById('advTrimLo').textContent = (adv.trim_lower || 0).toFixed(2);
+  document.getElementById('advDwell').innerHTML = (adv.dwell_counter || 0).toFixed(1) + ' <span class="kpi-unit">/ 20s</span>';
+  document.getElementById('advTotal').textContent = adv.total_adaptations || 0;
+
+  // Config
+  const cfg = d.config || {};
+  document.getElementById('cfgHost').textContent = cfg.plc_host || '--';
+  document.getElementById('cfgDeadband').innerHTML = (cfg.deadband_rpm || 0).toFixed(1) + ' <span class="kpi-unit">RPM</span>';
+  document.getElementById('depthInput').value = cfg.drill_depth_ft || 3000;
+  document.getElementById('phaseSelect').value = d.phase;
+
+  // Control state label
+  document.getElementById('ctrlStateLabel').textContent = d.state_machine;
+}
+
+function setSatBar(barId, pctId, value) {
+  const pct = Math.min(100, value * 100);
+  const bar = document.getElementById(barId);
+  bar.style.width = pct + '%';
+  bar.className = 'bar-fill ' + (pct > 40 ? 'red' : pct > 20 ? 'orange' : pct > 5 ? 'yellow' : 'green');
+  document.getElementById(pctId).textContent = pct.toFixed(0) + '%';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// API calls
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function apiPost(url, body) {
+  try {
+    const resp = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body || {}) });
+    if (!resp.ok) { const e = await resp.json(); alert('Error: ' + (e.detail || resp.statusText)); }
+  } catch(e) { alert('Network error: ' + e.message); }
+}
+
+function setPhase() {
+  const phase = document.getElementById('phaseSelect').value;
+  if (phase === 'C' || phase === 'D') {
+    if (!confirm(`Phase ${phase} enables PLC writes. Are you sure?`)) return;
+  }
+  apiPost('/api/control/phase', {phase});
+}
+
+function setDepth() {
+  const depth = parseFloat(document.getElementById('depthInput').value);
+  if (isNaN(depth) || depth <= 0) { alert('Invalid depth'); return; }
+  apiPost('/api/control/depth', {depth_ft: depth});
+}
+
+async function loadAudit() {
+  try {
+    const resp = await fetch('/api/audit');
+    const rows = await resp.json();
+    const tbody = document.getElementById('auditBody');
+    tbody.innerHTML = '';
+    rows.reverse().forEach(r => {
+      const tr = document.createElement('tr');
+      const ts = r.timestamp ? new Date(parseFloat(r.timestamp)*1000).toLocaleTimeString() : '';
+      tr.innerHTML = `<td>${ts}</td><td class="evt-${r.event_type||''}">${r.event_type||''}</td><td>${r.old_lower||''},${r.old_upper||''}</td><td>${r.new_lower||''},${r.new_upper||''}</td><td>${r.state||''}</td><td>${r.reason||''}</td><td>${r.heartbeat_seq||''}</td><td>${r.consecutive_rej||''}</td>`;
+      tbody.appendChild(tr);
+    });
+  } catch(e) { console.error('Audit load failed:', e); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Register Scanner
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _allRegisters = [];
+
+async function loadRegisters() {
+  try {
+    const resp = await fetch('/api/registers');
+    const data = await resp.json();
+    _allRegisters = data.registers;
+    // Populate section filter
+    const sel = document.getElementById('regSectionFilter');
+    sel.innerHTML = '<option value="all">All Sections</option>';
+    data.sections.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s;
+      sel.appendChild(opt);
+    });
+    document.getElementById('regCount').textContent =
+      `${data.active} active / ${data.total} total — ${data.read_blocks.length} read blocks`;
+    filterRegisters();
+  } catch(e) { alert('Failed to load registers: ' + e.message); }
+}
+
+function filterRegisters() {
+  const section = document.getElementById('regSectionFilter').value;
+  const hideSpare = document.getElementById('regHideSpare').checked;
+  const tbody = document.getElementById('regBody');
+  tbody.innerHTML = '';
+  _allRegisters.forEach(r => {
+    if (hideSpare && r.is_spare) return;
+    if (section !== 'all' && r.section !== section) return;
+    const tr = document.createElement('tr');
+    const valCell = r._live_value !== undefined ? r._live_value : '';
+    const rawCell = r._live_raw !== undefined ? r._live_raw : '';
+    tr.innerHTML = `<td>${r.ge_address}</td><td style="color:${r.writable?'var(--orange)':'var(--text)'}">${r.name}${r.writable?' &#9998;':''}</td><td>${r.dtype}</td><td>${r.bit !== null ? r.bit : ''}</td><td style="color:var(--dim)">${r.section}</td><td style="font-family:var(--mono)">${valCell}</td><td style="font-family:var(--mono);color:var(--dim)">${rawCell}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function scanRegisters() {
+  try {
+    document.getElementById('regCount').textContent = 'Scanning...';
+    const resp = await fetch('/api/registers/scan');
+    if (!resp.ok) { const e = await resp.json(); alert(e.detail || 'Scan failed'); return; }
+    const data = await resp.json();
+    // Merge live values into _allRegisters
+    const valueMap = {};
+    data.values.forEach(v => {
+      const key = v.ge_address + (v.bit !== null ? `(${v.bit})` : '');
+      valueMap[key] = v;
+    });
+    _allRegisters.forEach(r => {
+      const key = r.ge_address + (r.bit !== null ? `(${r.bit})` : '');
+      const v = valueMap[key];
+      if (v) { r._live_value = v.value; r._live_raw = v.raw; }
+    });
+    document.getElementById('regCount').textContent =
+      `Scanned ${data.register_count} registers at ${new Date(data.ts*1000).toLocaleTimeString()}`;
+    filterRegisters();
+  } catch(e) { alert('Scan failed: ' + e.message); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Simulation Sandbox
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function runSimulation() {
+  const btn = document.getElementById('simRunBtn');
+  btn.disabled = true; btn.textContent = 'Running...';
+  try {
+    const body = {
+      scenario: document.getElementById('simScenario').value,
+      duration_s: parseInt(document.getElementById('simDuration').value),
+      setpoint: parseFloat(document.getElementById('simSetpoint').value),
+    };
+    const resp = await fetch('/api/simulate', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) { const e = await resp.json(); alert(e.detail || 'Simulation failed'); return; }
+    const data = await resp.json();
+    document.getElementById('simResults').style.display = 'block';
+    document.getElementById('simSamples').textContent = data.sample_count;
+    const lbls = Object.entries(data.label_distribution).map(([k,v]) => `${k}:${v}`).join(', ');
+    document.getElementById('simLabels').textContent = lbls;
+
+    // Metrics table
+    const mtb = document.getElementById('simMetricsBody');
+    mtb.innerHTML = '';
+    (data.metrics || []).forEach(m => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${m.t.toFixed(1)}s</td><td>${m.dniae.toFixed(4)}</td><td class="mode-${m.mode}">${m.mode}</td><td>${m.confidence}</td><td>${m.rmse.toFixed(2)}</td><td>${(m.sat_total*100).toFixed(0)}%</td><td style="color:${m.is_windup?'var(--red)':'var(--green)'}">${m.is_windup?'YES':'No'}</td><td style="color:${m.change_detected?'var(--orange)':'var(--dim)'}">${m.change_detected?'YES':'No'}</td>`;
+      mtb.appendChild(tr);
+    });
+
+    // Draw chart
+    drawSimChart(data.timeseries);
+  } catch(e) { alert('Error: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = 'Run Simulation'; }
+}
+
+function drawSimChart(ts) {
+  const canvas = document.getElementById('simChart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth; const H = canvas.height;
+  canvas.width = W;
+  ctx.clearRect(0, 0, W, H);
+
+  const n = ts.rpm.length;
+  if (n < 2) return;
+  const tMax = ts.ts[n-1]; const tMin = ts.ts[0];
+  const allVals = ts.rpm.concat(ts.setpoint);
+  let yMin = Math.min(...allVals) - 5;
+  let yMax = Math.max(...allVals) + 5;
+  if (yMax - yMin < 10) { yMin -= 5; yMax += 5; }
+
+  const xOf = t => ((t - tMin) / (tMax - tMin)) * (W - 20) + 10;
+  const yOf = v => H - 10 - ((v - yMin) / (yMax - yMin)) * (H - 20);
+
+  // Label zones by color
+  const labelColors = {NORMAL:'#1e293b', BIAS:'#422006', OSCILLATION:'#3b1919',
+    DEADBAND_HUNTING:'#2d2006', SLUGGISH:'#1c1917', WINDUP:'#450a0a', CONDITION_CHANGE:'#0a2540'};
+  for (let i = 0; i < n-1; i++) {
+    const lbl = ts.labels[i];
+    if (lbl !== 'NORMAL') {
+      ctx.fillStyle = labelColors[lbl] || '#1e293b';
+      ctx.fillRect(xOf(ts.ts[i]), 0, xOf(ts.ts[i+1]) - xOf(ts.ts[i]), H);
+    }
+  }
+
+  // Setpoint line (dashed)
+  ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const x = xOf(ts.ts[i]), y = yOf(ts.setpoint[i]);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke(); ctx.setLineDash([]);
+
+  // RPM line
+  ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const x = xOf(ts.ts[i]), y = yOf(ts.rpm[i]);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Bounds (lower/upper shading)
+  ctx.fillStyle = 'rgba(34,197,94,0.05)';
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) ctx.lineTo(xOf(ts.ts[i]), yOf(ts.lower[i] / 5));
+  for (let i = n-1; i >= 0; i--) ctx.lineTo(xOf(ts.ts[i]), yOf(ts.upper[i] / 5));
+  ctx.closePath(); ctx.fill();
+
+  // Legend
+  ctx.font = '11px sans-serif';
+  ctx.fillStyle = '#3b82f6'; ctx.fillText('RPM', 15, 14);
+  ctx.fillStyle = '#64748b'; ctx.fillText('Setpoint', 55, 14);
+}
+
+// ── Age ticker ──
+setInterval(() => {
+  if (lastUpdate > 0) {
+    const age = ((Date.now() - lastUpdate) / 1000).toFixed(0);
+    document.getElementById('wsAge').textContent = age + 's ago';
+    if (age > 5) document.getElementById('wsStatus').textContent = 'stale';
+  }
+}, 1000);
+
+// ── Boot ──
+connectWS();
+loadAudit();
+setInterval(loadAudit, 30000);
+</script>
+</body>
+</html>
