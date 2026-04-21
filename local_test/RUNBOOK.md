@@ -194,6 +194,95 @@ python -m training.auto_pipeline --config training/remote_config.yaml --setup-on
 
 ---
 
+## 8b. OPC UA transport (optional — alternative to Modbus)
+
+The system supports **both Modbus TCP (default) and OPC UA** transports. OPC UA
+is opt-in per rig; Modbus stays the default. Use OPC UA when:
+- The PLC firmware supports OPC UA (GE CPE305 requires firmware ≥ 8.20)
+- Port 4840 is open through the eWon VPN
+- You want typed node access with built-in security options
+
+### Local test — boot the OPC UA simulator
+
+Terminal 1:
+```bash
+python -m local_test.sim_opcua
+```
+
+**Expected output:**
+```
+sim_opcua INFO Wrote node map to hxi_optimizer/comms/opcua_nodes.json
+sim_opcua INFO HXI OPC UA sim on opc.tcp://127.0.0.1:4840
+sim_opcua INFO Published 14 nodes under ns=4
+```
+
+The simulator:
+- Listens on `opc.tcp://127.0.0.1:4840`
+- Publishes 14 nodes under namespace 4, matching `opcua_nodes.json`
+- Mirrors writes to `Swash_Lower_Threshold` / `Swash_Upper_Limit` → `Active_Lower` / `Active_Upper`
+- Runs the same plant dynamics as `sim_plc.py`
+
+### Switch the optimizer to OPC UA
+
+Edit `hxi_optimizer/hxi_config.json`:
+```json
+{
+  "plc_host": "127.0.0.1",
+  "transport": "opcua",
+  "opcua_port": 4840,
+  ...
+}
+```
+
+Then run:
+```bash
+python -m hxi_optimizer.main
+```
+
+**Expected log line:**
+```
+main INFO Transport: OPC UA (127.0.0.1:4840)
+```
+
+The rest of the system (SafetyGate, PIDAdvisor, dashboard, CSV, audit) works
+identically regardless of transport.
+
+### Commissioning tests for OPC UA
+
+```bash
+# Connectivity test — can we open a session?
+python -m hxi_optimizer.deploy.commissioning_tests \
+    --test opcua_connect --transport opcua --host <PLC_IP>
+
+# Write/read roundtrip against a known writable node
+python -m hxi_optimizer.deploy.commissioning_tests \
+    --test opcua_roundtrip --transport opcua --host <PLC_IP> \
+    --node-id "ns=4;s=HXI.Smart_Slide.Heartbeat"
+```
+
+### Discover the PLC's address space (first time on a new rig)
+
+Before you can use OPC UA, the `opcua_nodes.json` map must pair register
+addresses to actual NodeIds on the PLC. Run the browser:
+
+```bash
+python -m hxi_optimizer.deploy.opcua_browse \
+    --host <PLC_IP> --depth 5 --output opcua_discovered.json
+```
+
+This prints every variable node (BrowseName, NodeId, DataType) and writes a
+starter JSON. Edit `hxi_optimizer/comms/opcua_nodes.json` to pair up the
+addresses you care about with the NodeIds from the browse output.
+
+### Known limitation — asyncua + Python 3.14
+
+`asyncua==1.1.8` has a Python 3.14 incompatibility in its client (`issubclass()` strictness).
+**The production rig PC uses Python 3.11 per MASTER_CONTEXT §7**, which works fine. If you're
+testing on a Python 3.14 dev box, only the OPC UA server side is functional — use Python 3.11
+for client-side integration tests.
+
+---
+
 ## 9. Safety gate forced-fail scenarios (manual verification)
 
 With the optimizer running in Phase A (no writes), use the dashboard to:

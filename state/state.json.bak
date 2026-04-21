@@ -9,7 +9,7 @@
   "advisor_trim_upper": 0.0,
   "advisor_trim_lower": 0.0,
   "advisor_total_adaptations": 0,
-  "metrics_dniae": 0.9620118569572933,
+  "metrics_dniae": 0.9685493345497271,
   "metrics_mode": "BIAS",
-  "_saved_at": 1776575634.4829493
+  "_saved_at": 1776751453.9481804
 }

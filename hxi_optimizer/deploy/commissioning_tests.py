@@ -169,15 +169,57 @@ async def run_selected(test: str, host: str, port: int, unit_id: int,
         client.close()
 
 
+async def test_opcua_connectivity(host: str, port: int, timeout: float = 5.0) -> bool:
+    """OPC UA-specific: can we connect, browse, and read at least one node?"""
+    from asyncua import Client
+    url = f"opc.tcp://{host}:{port}"
+    logger.info(f"OPC UA TEST: connecting to {url}")
+    try:
+        async with Client(url=url, timeout=timeout) as client:
+            objs = client.get_objects_node()
+            children = await objs.get_children()
+            logger.info(f"  PASS: session open, {len(children)} top-level objects")
+            return True
+    except Exception as e:
+        logger.error(f"  FAIL: {e}")
+        return False
+
+
+async def test_opcua_roundtrip(host: str, port: int, node_id: str,
+                               timeout: float = 5.0) -> bool:
+    """OPC UA-specific: write a value to a spare node, read it back."""
+    from asyncua import Client, ua
+    url = f"opc.tcp://{host}:{port}"
+    logger.info(f"OPC UA TEST: write/read roundtrip on {node_id}")
+    try:
+        async with Client(url=url, timeout=timeout) as client:
+            node = client.get_node(node_id)
+            test_val = 12345
+            await node.write_value(ua.Variant(test_val, ua.VariantType.Int16))
+            await asyncio.sleep(0.1)
+            readback = await node.read_value()
+            if int(readback) == test_val:
+                logger.info(f"  PASS: wrote {test_val}, read {readback}")
+                return True
+            logger.error(f"  FAIL: wrote {test_val}, read {readback}")
+            return False
+    except Exception as e:
+        logger.error(f"  FAIL: {e}")
+        return False
+
+
 def _parse_args():
     import argparse
     cfg = load_config()
     p = argparse.ArgumentParser(description="HXI Optimizer Phase A commissioning tests")
-    p.add_argument("--test", choices=TESTS, default="all",
-                   help="which test to run (default: all)")
+    p.add_argument("--test", choices=TESTS + ("opcua_connect", "opcua_roundtrip"),
+                   default="all", help="which test to run (default: all)")
+    p.add_argument("--transport", choices=("modbus", "opcua"), default="modbus",
+                   help="transport protocol (default: modbus)")
     p.add_argument("--host", default=cfg.plc_host,
                    help="PLC IP through eWon VPN (overrides hxi_config.json)")
-    p.add_argument("--port", type=int, default=cfg.plc_port)
+    p.add_argument("--port", type=int, default=None,
+                   help="port (default: 502 for modbus, 4840 for opcua)")
     p.add_argument("--unit-id", type=int, default=cfg.unit_id)
     p.add_argument("--trials", type=int, default=1000,
                    help="FC16 atomicity trials (default 1000)")
@@ -185,7 +227,19 @@ def _parse_args():
                    help="setpoint for noise-floor test (default 60)")
     p.add_argument("--duration", type=float, default=60.0,
                    help="noise-floor duration seconds (default 60)")
-    return p.parse_args()
+    p.add_argument("--node-id", default="ns=4;s=HXI.Smart_Slide.Heartbeat",
+                   help="OPC UA NodeId for roundtrip test")
+    args = p.parse_args()
+    if args.port is None:
+        args.port = 4840 if args.transport == "opcua" else cfg.plc_port
+    return args
+
+
+async def run_opcua_tests(args) -> None:
+    if args.test in ("opcua_connect", "all"):
+        await test_opcua_connectivity(args.host, args.port)
+    if args.test in ("opcua_roundtrip", "all"):
+        await test_opcua_roundtrip(args.host, args.port, args.node_id)
 
 
 if __name__ == "__main__":
@@ -193,8 +247,11 @@ if __name__ == "__main__":
     if args.host in ("", "CONFIGURE_ME"):
         logger.error("PLC host not set. Pass --host <ip> or edit hxi_config.json")
         raise SystemExit(2)
-    asyncio.run(run_selected(
-        test=args.test, host=args.host, port=args.port,
-        unit_id=args.unit_id, trials=args.trials,
-        rpm=args.rpm, duration=args.duration,
-    ))
+    if args.transport == "opcua":
+        asyncio.run(run_opcua_tests(args))
+    else:
+        asyncio.run(run_selected(
+            test=args.test, host=args.host, port=args.port,
+            unit_id=args.unit_id, trials=args.trials,
+            rpm=args.rpm, duration=args.duration,
+        ))

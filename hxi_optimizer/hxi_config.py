@@ -72,6 +72,16 @@ class Config:
     # Refuse-to-start switch — overridden after byte-order commissioning passes
     require_verified_word_order: bool = True
 
+    # Transport layer — "modbus" (default) or "opcua"
+    transport: str = "modbus"
+    # OPC UA specific (ignored when transport=="modbus")
+    opcua_port: int = 4840
+    opcua_security: str = "None"          # "None" | "Basic256Sha256"
+    opcua_username: Optional[str] = None
+    opcua_password: Optional[str] = None
+    opcua_cert_path: Optional[str] = None
+    opcua_node_map_file: str = "hxi_optimizer/comms/opcua_nodes.json"
+
 
 def load_config(path: str = "hxi_config.json") -> Config:
     cfg = Config()

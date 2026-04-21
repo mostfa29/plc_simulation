@@ -1,0 +1,16 @@
+{
+  "6599": "ns=4;s=HXI.Smart_Slide.RPM_Real_Encoder",
+  "6601": "ns=4;s=HXI.Smart_Slide.Swash_Output",
+  "6602": "ns=4;s=HXI.Smart_Slide.Swash_Lower_Threshold",
+  "6603": "ns=4;s=HXI.Smart_Slide.Swash_Upper_Limit",
+  "6604": "ns=4;s=HXI.Smart_Slide.Heartbeat",
+  "6609": "ns=4;s=HXI.Smart_Slide.Active_Lower",
+  "6610": "ns=4;s=HXI.Smart_Slide.Active_Upper",
+  "6612": "ns=4;s=HXI.Smart_Slide.Status_Word",
+  "6615": "ns=4;s=HXI.Smart_Slide.SS_Set_Speed_FWD",
+  "6626": "ns=4;s=HXI.Smart_Slide.Bump_Flag_FWD",
+  "6627": "ns=4;s=HXI.Smart_Slide.Bump_Flag_REV",
+  "6645": "ns=4;s=HXI.Torque_Control.Delivered_Torque_FTLBS",
+  "6664": "ns=4;s=HXI.Main_PLC.Outputs_Word_1",
+  "6669": "ns=4;s=HXI.Sensors.Loop_Temp"
+}

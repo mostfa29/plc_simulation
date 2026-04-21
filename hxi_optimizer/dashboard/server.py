@@ -284,16 +284,256 @@ def create_app(shared: dict) -> FastAPI:
             out[name] = {"params": params}
         return out
 
+    # ─── History buffer for charts (60 s rolling at 2 Hz = 120 samples) ─
+    shared.setdefault("history", {
+        "ts": [], "rpm": [], "setpoint": [], "swash": [],
+        "lower": [], "upper": [], "torque": [], "temp": [],
+        "dniae": [], "sat_total": [], "heartbeat": [],
+        "mode": [], "state": [],
+    })
+    HISTORY_MAX = 240  # 120 s at 2 Hz
+
+    def _push_history(snapshot: dict) -> None:
+        h = shared["history"]
+        live = snapshot.get("live", {})
+        met = snapshot.get("metrics", {}) or {}
+        safety = snapshot.get("safety", {}) or {}
+        h["ts"].append(snapshot["ts"])
+        h["rpm"].append(_safe_float(live.get("rpm")))
+        h["setpoint"].append(_safe_float(live.get("setpoint")))
+        h["swash"].append(_safe_float(live.get("swash_output")))
+        h["lower"].append(_safe_float(live.get("active_lower")))
+        h["upper"].append(_safe_float(live.get("active_upper")))
+        h["torque"].append(_safe_float(live.get("delivered_torque")))
+        h["temp"].append(_safe_float(live.get("loop_temp")))
+        h["dniae"].append(_safe_float(met.get("dniae")))
+        h["sat_total"].append(_safe_float(met.get("sat_total")))
+        h["heartbeat"].append(safety.get("heartbeat_counter", 0))
+        h["mode"].append(met.get("failure_mode", "NORMAL"))
+        h["state"].append(snapshot.get("state_machine", ""))
+        for k in h:
+            if len(h[k]) > HISTORY_MAX:
+                h[k] = h[k][-HISTORY_MAX:]
+
+    # Background history pusher — runs independently of WebSocket clients
+    async def _history_background():
+        while True:
+            try:
+                _push_history(_build_snapshot(shared))
+            except Exception as e:
+                logger.debug(f"history pusher: {e}")
+            await asyncio.sleep(0.5)
+
+    @app.on_event("startup")
+    async def _start_history_task():
+        asyncio.create_task(_history_background())
+
+    @app.get("/api/history")
+    async def api_history():
+        """Rolling 120 s telemetry buffer for charts."""
+        return shared.get("history", {})
+
+    # ─── Config view/edit endpoints ────────────────────────────────────
+    @app.get("/api/config")
+    async def api_config():
+        """Current optimizer configuration (sanitised for display)."""
+        c = shared.get("config")
+        if not c:
+            raise HTTPException(503, "Config not loaded")
+        return {
+            "plc_host": c.plc_host,
+            "plc_port": c.plc_port,
+            "unit_id": c.unit_id,
+            "modbus_timeout": c.modbus_timeout,
+            "read_start_addr": c.read_start_addr,
+            "read_count": c.read_count,
+            "read_interval": c.read_interval,
+            "analysis_interval": c.analysis_interval,
+            "write_interval": c.write_interval,
+            "nominal_setpoint": c.nominal_setpoint,
+            "deadband_rpm": c.deadband_rpm,
+            "phase": c.phase.value,
+            "drill_depth_ft": c.drill_depth_ft,
+            "osc_enabled": c.osc_enabled,
+            "require_verified_word_order": c.require_verified_word_order,
+            "transport": getattr(c, "transport", "modbus"),
+            "opcua_port": getattr(c, "opcua_port", 4840),
+            "safety": {
+                "abs_min_lower": c.safety.abs_min_lower,
+                "abs_max_lower": c.safety.abs_max_lower,
+                "abs_min_upper": c.safety.abs_min_upper,
+                "abs_max_upper": c.safety.abs_max_upper,
+                "min_band_counts": c.safety.min_band_counts,
+            },
+        }
+
+    # ─── Diagnostics ─────────────────────────────────────────────────
+    @app.get("/api/diagnostics")
+    async def api_diagnostics():
+        """Runtime diagnostics: connection metrics, counters, word-order, etc."""
+        gate = shared.get("gate")
+        modbus = shared.get("modbus")
+        advisor = shared.get("advisor")
+        monitor = shared.get("monitor")
+        config = shared.get("config")
+        from hxi_optimizer.comms.register_map import VERIFIED_WORD_ORDER
+        return {
+            "transport": modbus.transport_name if modbus else "?",
+            "transport_healthy": modbus.is_healthy if modbus else False,
+            "consecutive_failures": modbus.consecutive_failures if modbus else 0,
+            "verified_word_order": VERIFIED_WORD_ORDER,
+            "heartbeat_counter": gate.heartbeat_counter if gate else 0,
+            "gate_state": gate.state.name if gate else "UNKNOWN",
+            "total_adaptations": advisor.state.total_adaptations if advisor else 0,
+            "consecutive_rejections": gate.consecutive_rejections if gate else 0,
+            "cooldown_remaining": max(0, gate.cooldown_until - time.time()) if gate else 0,
+            "advisor_dwell": round(advisor.state.dwell_counter, 2) if advisor else 0,
+            "cusum_baseline_collected": monitor._baseline_collected if monitor else False,
+            "cusum_mean_alarms": monitor.cusum_mean.alarm_count if monitor else 0,
+            "cusum_var_alarms": monitor.cusum_var.alarm_count if monitor else 0,
+            "cusum_osc_alarms": monitor.cusum_osc.alarm_count if monitor else 0,
+            "current_phase": config.phase.value if config else "?",
+            "drill_depth_ft": config.drill_depth_ft if config else 0,
+        }
+
+    # ─── Logs tail endpoint ──────────────────────────────────────────
+    @app.get("/api/logs")
+    async def api_logs(lines: int = 200):
+        """Return the last N lines of optimizer.log."""
+        log_path = Path("hxi_optimizer/logs/optimizer.log")
+        if not log_path.exists():
+            return {"lines": [], "source": str(log_path)}
+        try:
+            with open(log_path, encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+            return {
+                "lines": all_lines[-lines:],
+                "total": len(all_lines),
+                "source": str(log_path),
+            }
+        except Exception as e:
+            raise HTTPException(500, f"Log read failed: {e}")
+
+    # ─── Training status ─────────────────────────────────────────────
+    @app.get("/api/training/status")
+    async def api_training_status():
+        """Which models are deployed, last training time, versions."""
+        models_dir = Path("hxi_optimizer/models")
+        training_models = Path("training/models")
+        result = {
+            "deployed_models": [],
+            "training_artefacts": [],
+            "reload_flag": False,
+        }
+        if models_dir.exists():
+            for f in models_dir.glob("*.tflite"):
+                stat = f.stat()
+                result["deployed_models"].append({
+                    "name": f.name,
+                    "size_bytes": stat.st_size,
+                    "modified": stat.st_mtime,
+                })
+            reload_flag = models_dir / ".reload"
+            if reload_flag.exists():
+                result["reload_flag"] = True
+                result["reload_timestamp"] = reload_flag.stat().st_mtime
+        if training_models.exists():
+            for d in training_models.iterdir():
+                if d.is_dir():
+                    tflite = list(d.glob("*.tflite"))
+                    result["training_artefacts"].append({
+                        "name": d.name,
+                        "has_tflite": len(tflite) > 0,
+                        "modified": d.stat().st_mtime,
+                    })
+        return result
+
+    # ─── Alarms / events stream ──────────────────────────────────────
+    shared.setdefault("alarms", [])
+
+    def _push_alarm(severity: str, message: str, source: str = "system") -> None:
+        """Push a notification into the dashboard's alarm queue."""
+        alarm = {
+            "ts": time.time(),
+            "severity": severity,  # info | warn | critical
+            "message": message,
+            "source": source,
+            "id": int(time.time() * 1000),
+        }
+        alarms = shared["alarms"]
+        alarms.append(alarm)
+        if len(alarms) > 100:
+            del alarms[0:len(alarms) - 100]
+
+    shared["push_alarm"] = _push_alarm
+
+    @app.get("/api/alarms")
+    async def api_alarms(since: float = 0):
+        """Alarms newer than `since` (unix timestamp)."""
+        alarms = shared.get("alarms", [])
+        return [a for a in alarms if a["ts"] > since]
+
+    @app.post("/api/alarms/dismiss")
+    async def api_alarms_dismiss():
+        """Clear the alarm queue."""
+        shared["alarms"] = []
+        return {"status": "cleared"}
+
+    # ─── Transport info ───────────────────────────────────────────────
+    @app.get("/api/transport")
+    async def api_transport():
+        modbus = shared.get("modbus")
+        config = shared.get("config")
+        if not modbus:
+            raise HTTPException(503, "Transport not initialized")
+        return {
+            "name": modbus.transport_name,
+            "healthy": modbus.is_healthy,
+            "consecutive_failures": modbus.consecutive_failures,
+            "connected": modbus.client.connected if hasattr(modbus, "client") else False,
+            "host": config.plc_host if config else "",
+            "port": getattr(config, "opcua_port" if getattr(config, "transport", "modbus") == "opcua" else "plc_port", None),
+        }
+
+    # ─── CSV data export ─────────────────────────────────────────────
+    @app.get("/api/export/history.csv")
+    async def api_export_history():
+        """Download the current history buffer as CSV."""
+        from fastapi.responses import PlainTextResponse
+        h = shared.get("history", {})
+        if not h.get("ts"):
+            return PlainTextResponse("timestamp\n", media_type="text/csv")
+        cols = ["ts", "rpm", "setpoint", "swash", "lower", "upper",
+                "torque", "temp", "dniae", "sat_total", "heartbeat", "mode", "state"]
+        lines = [",".join(cols)]
+        n = len(h["ts"])
+        for i in range(n):
+            row = []
+            for c in cols:
+                v = h.get(c, [None] * n)[i] if i < len(h.get(c, [])) else ""
+                row.append("" if v is None else str(v))
+            lines.append(",".join(row))
+        return PlainTextResponse("\n".join(lines), media_type="text/csv",
+                                 headers={"Content-Disposition": "attachment; filename=history.csv"})
+
     # ─── WebSocket — 2 Hz live telemetry push ──────────────────────────
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
         await ws.accept()
         logger.info("Dashboard WebSocket client connected")
         try:
+            last_alarm_ts = 0.0
             while True:
                 snapshot = _build_snapshot(shared)
+                # History is pushed by the background task, not here
+                # Include any new alarms
+                alarms = shared.get("alarms", [])
+                new_alarms = [a for a in alarms if a["ts"] > last_alarm_ts]
+                if new_alarms:
+                    last_alarm_ts = new_alarms[-1]["ts"]
+                snapshot["new_alarms"] = new_alarms
                 await ws.send_json(snapshot)
-                await asyncio.sleep(0.5)  # 2 Hz
+                await asyncio.sleep(0.5)
         except WebSocketDisconnect:
             logger.info("Dashboard WebSocket client disconnected")
         except Exception as e:

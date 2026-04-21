@@ -31,7 +31,7 @@ gc.freeze()
 gc.set_threshold(50000, 20, 20)
 
 from hxi_optimizer.hxi_config import Config, Phase, load_config
-from hxi_optimizer.comms.modbus_client import ModbusManager
+from hxi_optimizer.comms.transport import build_transport
 from hxi_optimizer.comms.register_map import (
     build_sample, esd_bit_from_word, VERIFIED_WORD_ORDER,
 )
@@ -76,7 +76,7 @@ dashboard_shared: dict = {}
 
 # ─── Read loop ──────────────────────────────────────────────────────────────
 
-async def read_loop(mgr: ModbusManager, config: Config) -> None:
+async def read_loop(mgr, config: Config) -> None:
     logger.info("read_loop: starting (2 Hz, drift-compensating)")
     next_time = asyncio.get_event_loop().time()
     seq = 0
@@ -207,7 +207,7 @@ async def analysis_loop(executor: ThreadPoolExecutor,
         _persist_state(gate, advisor, metrics)
 
 
-async def connection_monitor(mgr: ModbusManager, gate: SafetyGate,
+async def connection_monitor(mgr, gate: SafetyGate,
                              config: Config) -> None:
     logger.info("connection_monitor: starting (5 s)")
     while not shutdown_event.is_set():
@@ -310,8 +310,10 @@ async def main() -> None:
     except Exception as e:
         logger.warning(f"Could not raise process priority: {e}")
 
-    # Build components
-    modbus_mgr = ModbusManager(config)
+    # Build components — transport is pluggable (Modbus or OPC UA) via config
+    modbus_mgr = build_transport(config)
+    logger.info(f"Transport: {modbus_mgr.transport_name} "
+                f"({config.plc_host}:{getattr(config, 'opcua_port' if config.transport=='opcua' else 'plc_port', '?')})")
     audit = AuditLogger(LOG_DIR / "audit.log")
 
     safety_cfg = SafetyConfig(
@@ -399,9 +401,9 @@ async def main() -> None:
         except queue.Full:
             pass
         csv_logger.join(timeout=5)
-        logger.info("Shutdown: closing Modbus client")
+        logger.info(f"Shutdown: closing {modbus_mgr.transport_name} client")
         try:
-            modbus_mgr.client.close()
+            await modbus_mgr.close()
         except Exception:
             pass
         executor.shutdown(wait=False)

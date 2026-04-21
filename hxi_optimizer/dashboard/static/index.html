@@ -3,13 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HXI Optimizer Dashboard</title>
+<title>HXI Optimizer — Dashboard</title>
 <style>
 :root {
   --bg: #0a0e17;
   --card: #111827;
+  --card2: #0f172a;
   --border: #1e293b;
   --text: #e2e8f0;
+  --text2: #94a3b8;
   --dim: #64748b;
   --accent: #3b82f6;
   --green: #22c55e;
@@ -17,336 +19,535 @@
   --red: #ef4444;
   --orange: #f97316;
   --cyan: #06b6d4;
+  --purple: #a855f7;
   --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
   --mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  --header-h: 56px;
+  --tabs-h: 44px;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; overflow-x: hidden; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; overflow-x: hidden; }
 a { color: var(--accent); }
 
-/* ── Header ─── */
-.header { background: var(--card); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
-.header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
-.header h1 span { color: var(--accent); }
-.conn-badge { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+/* ── Header ── */
+.header {
+  background: var(--card); border-bottom: 1px solid var(--border);
+  padding: 0 24px; display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 100; height: var(--header-h);
+}
+.logo { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+.logo span { color: var(--accent); }
+.status-strip { display: flex; align-items: center; gap: 14px; font-size: 12px; }
 .conn-dot { width: 10px; height: 10px; border-radius: 50%; }
 .conn-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .conn-dot.warn { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
 .conn-dot.err { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.status-item { display: flex; align-items: center; gap: 6px; }
+.status-item .label { color: var(--dim); }
 
-/* ── Layout ─── */
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; padding: 16px 24px; }
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
-.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--dim); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
-.card h2 .icon { font-size: 16px; }
+/* ── Tabs bar ── */
+.tabs {
+  background: var(--card2); border-bottom: 1px solid var(--border);
+  display: flex; overflow-x: auto; padding: 0 20px; height: var(--tabs-h);
+  position: sticky; top: var(--header-h); z-index: 99;
+}
+.tabs::-webkit-scrollbar { height: 3px; }
+.tabs::-webkit-scrollbar-thumb { background: var(--border); }
+.tab {
+  padding: 0 18px; height: 100%; background: transparent; border: none; color: var(--dim);
+  cursor: pointer; font-size: 13px; font-weight: 500; white-space: nowrap;
+  border-bottom: 2px solid transparent; transition: all 0.15s;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab .count { display: inline-block; background: var(--border); color: var(--text); font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px; }
+.tab.active .count { background: var(--accent); color: #fff; }
 
-/* ── KPI Rows ─── */
-.kpi-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
-.kpi { flex: 1; min-width: 90px; }
-.kpi-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; }
+/* ── Main content area ── */
+.panel { display: none; padding: 16px 24px 40px; }
+.panel.active { display: block; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
+.grid-wide { grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
+.card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--dim); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.card h2 .icon { font-size: 15px; }
+.card-header-actions { margin-left: auto; display: flex; gap: 4px; }
+.full-width { grid-column: 1 / -1; }
+
+/* ── KPIs ── */
+.kpi-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.kpi { flex: 1; min-width: 84px; }
+.kpi-label { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; }
 .kpi-value { font-size: 22px; font-weight: 700; font-family: var(--mono); margin-top: 2px; }
-.kpi-value.small { font-size: 16px; }
-.kpi-unit { font-size: 11px; color: var(--dim); font-weight: 400; }
+.kpi-value.sm { font-size: 15px; }
+.kpi-value.xs { font-size: 12px; }
+.kpi-unit { font-size: 10px; color: var(--dim); font-weight: 400; }
 
-/* ── State badge ─── */
-.state-badge { display: inline-block; padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; font-family: var(--mono); letter-spacing: 0.5px; }
+/* ── State & phase badges ── */
+.badge { display: inline-block; padding: 3px 10px; border-radius: 5px; font-size: 11px; font-weight: 600; font-family: var(--mono); letter-spacing: 0.5px; }
 .state-BASELINE { background: #1e3a5f; color: var(--accent); }
 .state-TRIAL { background: #422006; color: var(--orange); }
 .state-ACCEPTED { background: #14532d; color: var(--green); }
 .state-DISABLED { background: #1c1917; color: var(--dim); }
 .state-ESD { background: #450a0a; color: var(--red); animation: pulse 1s infinite; }
 .state-REJECTED { background: #451a03; color: var(--yellow); }
-
+.state-UNKNOWN { background: var(--border); color: var(--dim); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-
-/* ── Phase badge ─── */
-.phase-badge { display: inline-block; padding: 3px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; font-family: var(--mono); }
 .phase-A { background: #1e293b; color: var(--dim); }
 .phase-B { background: #1e3a5f; color: var(--cyan); }
 .phase-C { background: #422006; color: var(--orange); }
 .phase-D { background: #14532d; color: var(--green); }
-
-/* ── Failure mode ─── */
 .mode-NORMAL { color: var(--green); }
 .mode-BIAS { color: var(--yellow); }
-.mode-OSCILLATION { color: var(--orange); }
-.mode-DEADBAND_HUNTING { color: var(--orange); }
+.mode-OSCILLATION, .mode-DEADBAND_HUNTING { color: var(--orange); }
 .mode-SLUGGISH { color: var(--yellow); }
-.mode-INSUFFICIENT_DATA { color: var(--dim); }
+.mode-INSUFFICIENT_DATA, .mode- { color: var(--dim); }
+.mode-WINDUP { color: var(--red); }
 
-/* ── Bar gauge ─── */
-.bar-gauge { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 4px 0; }
+/* ── Bars & sliders ── */
+.bar-gauge { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
 .bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s ease; }
 .bar-fill.green { background: var(--green); }
 .bar-fill.yellow { background: var(--yellow); }
 .bar-fill.orange { background: var(--orange); }
 .bar-fill.red { background: var(--red); }
 
-/* ── Controls ─── */
-.btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-.btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.15s; }
-.btn:hover { border-color: var(--accent); background: #1e293b; }
-.btn.danger { border-color: var(--red); color: var(--red); }
-.btn.danger:hover { background: #450a0a; }
-.btn.success { border-color: var(--green); color: var(--green); }
-.btn.success:hover { background: #14532d; }
-.btn:disabled { opacity: 0.3; cursor: not-allowed; }
-
-/* ─�� Input ─── */
-.input-group { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
-.input-group input, .input-group select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 13px; width: 100px; }
-
-/* ��─ Audit table ─── */
-.audit-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--mono); margin-top: 8px; }
-.audit-table th { text-align: left; padding: 4px 8px; color: var(--dim); font-weight: 500; border-bottom: 1px solid var(--border); }
-.audit-table td { padding: 4px 8px; border-bottom: 1px solid #0f172a; }
-.audit-table .evt-WRITE { color: var(--green); }
-.audit-table .evt-REJECTED { color: var(--yellow); }
-.audit-table .evt-ROLLBACK { color: var(--red); }
-.audit-table .evt-ESD_FREEZE { color: var(--red); font-weight: 700; }
-.audit-table .evt-ACCEPTED { color: var(--cyan); }
-
-/* ── Swash bar ─── */
-.swash-bar { position: relative; height: 32px; background: var(--bg); border-radius: 6px; margin: 8px 0; overflow: hidden; border: 1px solid var(--border); }
-.swash-zone { position: absolute; top: 0; height: 100%; opacity: 0.2; }
-.swash-zone.active { background: var(--green); }
+/* ── Swash bar ── */
+.swash-bar { position: relative; height: 32px; background: var(--bg); border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
+.swash-zone { position: absolute; top: 0; height: 100%; background: rgba(34,197,94,0.15); }
 .swash-marker { position: absolute; top: 0; width: 3px; height: 100%; border-radius: 2px; }
 .swash-marker.output { background: var(--accent); }
-.swash-marker.lower { background: var(--red); opacity: 0.7; }
-.swash-marker.upper { background: var(--red); opacity: 0.7; }
+.swash-marker.lower, .swash-marker.upper { background: var(--red); opacity: 0.7; }
 
-/* ── Scrollable ─── */
-.scroll-box { max-height: 300px; overflow-y: auto; }
+/* ── Buttons ── */
+.btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--card2); color: var(--text); cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.15s; }
+.btn:hover:not(:disabled) { border-color: var(--accent); background: #1e293b; }
+.btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn.small { padding: 3px 10px; font-size: 11px; }
+.btn.danger { border-color: var(--red); color: var(--red); }
+.btn.danger:hover:not(:disabled) { background: #450a0a; }
+.btn.success { border-color: var(--green); color: var(--green); }
+.btn.success:hover:not(:disabled) { background: #14532d; }
+.btn.primary { border-color: var(--accent); color: var(--accent); }
+.btn.primary:hover:not(:disabled) { background: #1e3a5f; }
+
+/* ── Inputs ── */
+.input-group { display: flex; gap: 6px; align-items: center; }
+input[type="number"], input[type="text"], select {
+  padding: 6px 9px; border-radius: 5px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px;
+}
+select { font-family: var(--font); }
+label { font-size: 12px; color: var(--text2); }
+
+/* ── Tables ── */
+table { width: 100%; border-collapse: collapse; font-size: 11px; font-family: var(--mono); }
+table th { text-align: left; padding: 4px 8px; color: var(--dim); font-weight: 500; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--card); }
+table td { padding: 4px 8px; border-bottom: 1px solid #0f172a; }
+tr:hover td { background: #0f172a; }
+.evt-WRITE { color: var(--green); }
+.evt-REJECTED { color: var(--yellow); }
+.evt-ROLLBACK, .evt-ESD_FREEZE { color: var(--red); font-weight: 700; }
+.evt-ACCEPTED { color: var(--cyan); }
+
+/* ── Scroll containers ── */
+.scroll-box { max-height: 400px; overflow-y: auto; }
 .scroll-box::-webkit-scrollbar { width: 6px; }
 .scroll-box::-webkit-scrollbar-track { background: var(--bg); }
 .scroll-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-/* ── Temp ─── */
+/* ── Charts ── */
+canvas { width: 100%; display: block; background: var(--bg); border-radius: 6px; border: 1px solid var(--border); }
+.chart-box { position: relative; }
+.chart-legend { display: flex; gap: 14px; font-size: 11px; margin-top: 4px; padding: 0 4px; }
+.chart-legend span { display: flex; align-items: center; gap: 4px; }
+.chart-legend .dot { width: 10px; height: 2px; display: inline-block; }
+
+/* ── Alarms drawer ── */
+.alarms-toggle {
+  position: fixed; bottom: 20px; right: 20px; z-index: 200;
+  background: var(--accent); color: white; border: none; border-radius: 50%;
+  width: 48px; height: 48px; cursor: pointer; font-size: 20px;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+  transition: transform 0.15s;
+}
+.alarms-toggle:hover { transform: scale(1.08); }
+.alarms-toggle .badge-count {
+  position: absolute; top: -4px; right: -4px; background: var(--red); color: white;
+  font-size: 10px; border-radius: 50%; width: 20px; height: 20px; line-height: 20px; text-align: center;
+  font-weight: 700;
+}
+.alarms-drawer {
+  position: fixed; top: 0; right: -400px; height: 100vh; width: 380px;
+  background: var(--card); border-left: 1px solid var(--border);
+  transition: right 0.3s; z-index: 150; overflow-y: auto; padding: 16px;
+}
+.alarms-drawer.open { right: 0; }
+.alarms-drawer h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin-bottom: 12px; display: flex; justify-content: space-between; }
+.alarm-item { padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid var(--dim); background: var(--card2); }
+.alarm-item.severity-info { border-left-color: var(--accent); }
+.alarm-item.severity-warn { border-left-color: var(--yellow); }
+.alarm-item.severity-critical { border-left-color: var(--red); }
+.alarm-time { font-size: 10px; color: var(--dim); font-family: var(--mono); }
+.alarm-msg { font-size: 12px; margin-top: 2px; }
+.alarm-source { font-size: 10px; color: var(--text2); margin-top: 3px; }
+
+/* ── Toast notifications ── */
+.toast-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 300; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  padding: 10px 16px; border-radius: 6px; background: var(--card); border: 1px solid var(--border);
+  color: var(--text); font-size: 12px; animation: slideUp 0.3s ease;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+}
+.toast.success { border-left: 4px solid var(--green); }
+.toast.error { border-left: 4px solid var(--red); }
+.toast.info { border-left: 4px solid var(--accent); }
+@keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── Utility ── */
+.row { display: flex; gap: 8px; align-items: center; }
+.row.between { justify-content: space-between; }
+.spacer { flex: 1; }
+.mt-8 { margin-top: 8px; }
+.mt-12 { margin-top: 12px; }
+.mt-16 { margin-top: 16px; }
+.muted { color: var(--dim); }
+.small { font-size: 11px; }
+.hidden { display: none; }
 .temp-ok { color: var(--green); }
 .temp-warn { color: var(--yellow); }
 .temp-danger { color: var(--red); }
 
-.full-width { grid-column: 1 / -1; }
+/* ── Responsive ── */
+@media (max-width: 700px) {
+  .grid { grid-template-columns: 1fr; }
+  .tabs { padding: 0 10px; }
+  .tab { padding: 0 12px; font-size: 12px; }
+  .status-strip { font-size: 11px; gap: 8px; }
+}
 </style>
 </head>
 <body>
 
-<!-- ═══ HEADER ═══ -->
+<!-- ═══════════ HEADER ═══════════ -->
 <div class="header">
-  <h1><span>HXI</span> Optimizer Dashboard</h1>
-  <div class="conn-badge">
-    <div class="conn-dot" id="connDot"></div>
-    <span id="connLabel">Connecting...</span>
-    <span class="phase-badge" id="phaseBadge">--</span>
-    <span class="state-badge" id="stateBadge">--</span>
+  <div class="logo"><span>HXI</span> Optimizer</div>
+  <div class="status-strip">
+    <span class="status-item"><span class="conn-dot" id="connDot"></span><span id="connLabel">Connecting...</span></span>
+    <span class="status-item"><span class="label">Phase</span><span class="badge" id="phaseBadge">--</span></span>
+    <span class="status-item"><span class="label">State</span><span class="badge" id="stateBadge">--</span></span>
+    <span class="status-item"><span class="label">Transport</span><span id="transportLabel" class="small">--</span></span>
+    <span class="status-item"><span class="label">HB</span><span id="hbLabel" class="small">0</span></span>
   </div>
 </div>
 
-<!-- ═══ GRID ═══ -->
-<div class="grid">
+<!-- ═══════════ TABS ═══════════ -->
+<div class="tabs" id="tabsBar">
+  <button class="tab active" data-tab="overview">Overview</button>
+  <button class="tab" data-tab="live">Live Charts</button>
+  <button class="tab" data-tab="safety">Safety</button>
+  <button class="tab" data-tab="performance">Performance</button>
+  <button class="tab" data-tab="controls">Controls</button>
+  <button class="tab" data-tab="registers">Registers</button>
+  <button class="tab" data-tab="simulation">Simulation</button>
+  <button class="tab" data-tab="training">Training</button>
+  <button class="tab" data-tab="diagnostics">Diagnostics</button>
+  <button class="tab" data-tab="audit">Audit <span class="count" id="auditCount">0</span></button>
+  <button class="tab" data-tab="logs">Logs</button>
+</div>
 
-  <!-- ── Live RPM + Swash ── -->
-  <div class="card">
-    <h2><span class="icon">&#9201;</span> Live Telemetry</h2>
-    <div class="kpi-row">
-      <div class="kpi">
-        <div class="kpi-label">RPM</div>
-        <div class="kpi-value" id="liveRpm">--</div>
+<!-- ═══════════ OVERVIEW ═══════════ -->
+<div class="panel active" id="panel-overview">
+  <div class="grid">
+    <!-- Live KPIs -->
+    <div class="card">
+      <h2><span class="icon">&#9201;</span>Live Telemetry</h2>
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">RPM</div><div class="kpi-value" id="kpiRpm">--</div></div>
+        <div class="kpi"><div class="kpi-label">Setpoint</div><div class="kpi-value sm" id="kpiSetpoint">--</div></div>
+        <div class="kpi"><div class="kpi-label">Error</div><div class="kpi-value sm" id="kpiError">--</div></div>
       </div>
-      <div class="kpi">
-        <div class="kpi-label">Setpoint</div>
-        <div class="kpi-value small" id="liveSetpoint">--</div>
+      <div class="kpi-label mt-12">Swash Position</div>
+      <div class="swash-bar mt-8">
+        <div class="swash-zone" id="swashZone"></div>
+        <div class="swash-marker lower" id="swashLower"></div>
+        <div class="swash-marker upper" id="swashUpper"></div>
+        <div class="swash-marker output" id="swashOutput"></div>
       </div>
-      <div class="kpi">
-        <div class="kpi-label">Error</div>
-        <div class="kpi-value small" id="liveError">-- <span class="kpi-unit">RPM</span></div>
+      <div class="row between small muted mt-8">
+        <span>L <b id="lblLower">--</b></span>
+        <span>Out <b id="lblOutput">--</b></span>
+        <span>U <b id="lblUpper">--</b></span>
       </div>
     </div>
-    <div class="kpi-label" style="margin-top:8px">Swash Position</div>
-    <div class="swash-bar" id="swashBar">
-      <div class="swash-zone active" id="swashZone"></div>
-      <div class="swash-marker lower" id="swashLower" title="Lower bound"></div>
-      <div class="swash-marker upper" id="swashUpper" title="Upper bound"></div>
-      <div class="swash-marker output" id="swashOutput" title="Swash output"></div>
+
+    <!-- Performance -->
+    <div class="card">
+      <h2><span class="icon">&#9899;</span>Performance</h2>
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">DNIAE</div><div class="kpi-value" id="kpiDniae">--</div></div>
+        <div class="kpi"><div class="kpi-label">Mode</div><div class="kpi-value sm" id="kpiMode">--</div></div>
+        <div class="kpi"><div class="kpi-label">RMSE</div><div class="kpi-value sm" id="kpiRmse">--</div></div>
+      </div>
+      <div class="kpi-label mt-12">Saturation</div>
+      <div class="row mt-8"><span class="small muted" style="width:44px">Upper</span><div class="bar-gauge" style="flex:1"><div class="bar-fill" id="satUpperBar"></div></div><span class="small" style="width:38px;text-align:right;font-family:var(--mono)" id="satUpperPct">0%</span></div>
+      <div class="row mt-8"><span class="small muted" style="width:44px">Lower</span><div class="bar-gauge" style="flex:1"><div class="bar-fill" id="satLowerBar"></div></div><span class="small" style="width:38px;text-align:right;font-family:var(--mono)" id="satLowerPct">0%</span></div>
     </div>
-    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim)">
-      <span>Lower: <b id="lblLower">--</b></span>
-      <span>Output: <b id="lblOutput">--</b></span>
-      <span>Upper: <b id="lblUpper">--</b></span>
+
+    <!-- Safety summary -->
+    <div class="card">
+      <h2><span class="icon">&#128274;</span>Safety</h2>
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">Rejections</div><div class="kpi-value" id="kpiRej">0</div></div>
+        <div class="kpi"><div class="kpi-label">Cooldown</div><div class="kpi-value sm" id="kpiCooldown">0s</div></div>
+        <div class="kpi"><div class="kpi-label">Total Adapts</div><div class="kpi-value sm" id="kpiTotalAdapt">0</div></div>
+      </div>
+      <div class="row between mt-12 small">
+        <span>ESD: <b id="kpiEsd" class="temp-ok">--</b></span>
+        <span>Bump: <b id="kpiBump" class="temp-ok">--</b></span>
+        <span>Windup: <b id="kpiWindup" class="temp-ok">--</b></span>
+      </div>
+      <div class="kpi-label mt-12">Last Known Good</div>
+      <div class="mt-8 small" style="font-family:var(--mono)">
+        [<span id="lkgLower">--</span>, <span id="lkgUpper">--</span>] IAE=<span id="lkgIae">--</span>
+      </div>
+    </div>
+
+    <!-- Hydraulic / env -->
+    <div class="card">
+      <h2><span class="icon">&#127777;</span>Environment</h2>
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">Loop Temp</div><div class="kpi-value sm" id="kpiTemp">--</div></div>
+        <div class="kpi"><div class="kpi-label">Torque</div><div class="kpi-value sm" id="kpiTorque">--</div></div>
+        <div class="kpi"><div class="kpi-label">Depth</div><div class="kpi-value sm" id="kpiDepth">--</div></div>
+      </div>
+      <div class="mt-12 small muted">Trim</div>
+      <div class="row between small mt-8">
+        <span>Upper <b id="kpiTrimUp" style="font-family:var(--mono)">0.00</b></span>
+        <span>Lower <b id="kpiTrimLo" style="font-family:var(--mono)">0.00</b></span>
+        <span>Dwell <b id="kpiDwell" style="font-family:var(--mono)">0.0</b>/20s</span>
+      </div>
     </div>
   </div>
 
-  <!-- ── Performance Metrics ── -->
-  <div class="card">
-    <h2><span class="icon">&#9899;</span> Performance</h2>
-    <div class="kpi-row">
-      <div class="kpi">
-        <div class="kpi-label">DNIAE</div>
-        <div class="kpi-value" id="metDniae">--</div>
+  <!-- Mini RPM chart -->
+  <div class="card mt-16 full-width">
+    <h2><span class="icon">&#128200;</span>RPM vs Setpoint (60 s rolling)
+      <div class="card-header-actions">
+        <button class="btn small" onclick="exportHistory()">Export CSV</button>
       </div>
-      <div class="kpi">
-        <div class="kpi-label">Mode</div>
-        <div class="kpi-value small" id="metMode">--</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">RMSE</div>
-        <div class="kpi-value small" id="metRmse">-- <span class="kpi-unit">RPM</span></div>
-      </div>
-    </div>
-    <div class="kpi-label" style="margin-top:10px">Saturation</div>
-    <div style="display:flex;gap:12px;align-items:center;margin-top:4px">
-      <span style="font-size:11px;color:var(--dim);width:40px">Upper</span>
-      <div class="bar-gauge" style="flex:1"><div class="bar-fill" id="satUpperBar"></div></div>
-      <span style="font-size:12px;font-family:var(--mono);width:40px" id="satUpperPct">0%</span>
-    </div>
-    <div style="display:flex;gap:12px;align-items:center;margin-top:4px">
-      <span style="font-size:11px;color:var(--dim);width:40px">Lower</span>
-      <div class="bar-gauge" style="flex:1"><div class="bar-fill" id="satLowerBar"></div></div>
-      <span style="font-size:12px;font-family:var(--mono);width:40px" id="satLowerPct">0%</span>
-    </div>
-    <div style="display:flex;gap:16px;margin-top:10px;font-size:12px">
-      <span>Windup: <b id="metWindup">--</b></span>
-      <span>Change: <b id="metChange">--</b></span>
-      <span>Valid: <b id="metValid">--</b>/40</span>
-    </div>
-  </div>
-
-  <!-- ── Safety Gate ── -->
-  <div class="card">
-    <h2><span class="icon">&#128274;</span> Safety Gate</h2>
-    <div class="kpi-row">
-      <div class="kpi">
-        <div class="kpi-label">State</div>
-        <div class="kpi-value small"><span class="state-badge" id="gateState">--</span></div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Rejections</div>
-        <div class="kpi-value" id="gateRej">0</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Heartbeat</div>
-        <div class="kpi-value small" id="gateHb">0</div>
-      </div>
-    </div>
-    <div class="kpi-row" style="margin-top:8px">
-      <div class="kpi">
-        <div class="kpi-label">Cooldown</div>
-        <div class="kpi-value small" id="gateCooldown">0s</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">ESD</div>
-        <div class="kpi-value small" id="gateEsd">--</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Bump Lock</div>
-        <div class="kpi-value small" id="gateBump">--</div>
-      </div>
-    </div>
-    <div class="kpi-label" style="margin-top:10px">Last Known Good</div>
-    <div style="font-family:var(--mono);font-size:13px;margin-top:4px">
-      [<span id="lkgLower">--</span>, <span id="lkgUpper">--</span>]
-      <span style="color:var(--dim)">IAE=<span id="lkgIae">--</span></span>
-    </div>
-  </div>
-
-  <!-- ── Adaptation ── -->
-  <div class="card">
-    <h2><span class="icon">&#9881;</span> Adaptation</h2>
-    <div class="kpi-row">
-      <div class="kpi">
-        <div class="kpi-label">Trim Upper</div>
-        <div class="kpi-value small" id="advTrimUp">0.00</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Trim Lower</div>
-        <div class="kpi-value small" id="advTrimLo">0.00</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Dwell</div>
-        <div class="kpi-value small" id="advDwell">0.0 <span class="kpi-unit">/ 20s</span></div>
-      </div>
-    </div>
-    <div style="margin-top:8px;font-size:12px">
-      Total adaptations: <b id="advTotal">0</b>
-    </div>
-    <div class="kpi-label" style="margin-top:12px">Hydraulic Temp</div>
-    <div class="kpi-value small" id="liveTemp">-- <span class="kpi-unit">&deg;C</span></div>
-  </div>
-
-  <!-- ── Operator Controls ── -->
-  <div class="card">
-    <h2><span class="icon">&#9889;</span> Operator Controls</h2>
-    <div style="font-size:13px;margin-bottom:8px">Adaptive is currently: <b id="ctrlStateLabel">--</b></div>
-    <div class="btn-row">
-      <button class="btn success" id="btnEnable" onclick="apiPost('/api/control/enable')">Enable Adaptive</button>
-      <button class="btn danger" id="btnDisable" onclick="apiPost('/api/control/disable')">Disable Adaptive</button>
-    </div>
-    <div class="input-group" style="margin-top:16px">
-      <span style="font-size:13px">Phase:</span>
-      <select id="phaseSelect">
-        <option value="A">A - Observer</option>
-        <option value="B">B - Advisory</option>
-        <option value="C">C - Limited Writes</option>
-        <option value="D">D - Full Authority</option>
-      </select>
-      <button class="btn" onclick="setPhase()">Set</button>
-    </div>
-    <div class="input-group" style="margin-top:8px">
-      <span style="font-size:13px">Depth (ft):</span>
-      <input type="number" id="depthInput" value="3000" min="100" step="100">
-      <button class="btn" onclick="setDepth()">Set</button>
-    </div>
-  </div>
-
-  <!-- ── Connection Info ── -->
-  <div class="card">
-    <h2><span class="icon">&#128268;</span> Connection</h2>
-    <div class="kpi-row">
-      <div class="kpi">
-        <div class="kpi-label">PLC Host</div>
-        <div class="kpi-value small" id="cfgHost">--</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Deadband</div>
-        <div class="kpi-value small" id="cfgDeadband">-- <span class="kpi-unit">RPM</span></div>
-      </div>
-    </div>
-    <div style="margin-top:8px;font-size:12px;color:var(--dim)">
-      WebSocket: <span id="wsStatus">connecting...</span>
-      &middot; Last update: <span id="wsAge">--</span>
-    </div>
-  </div>
-
-  <!-- ── Register Scanner ── -->
-  <div class="card full-width">
-    <h2><span class="icon">&#128270;</span> Register Scanner
-      <button class="btn" style="margin-left:auto;font-size:11px;padding:3px 10px" onclick="loadRegisters()">Load Map</button>
-      <button class="btn success" style="font-size:11px;padding:3px 10px;margin-left:4px" onclick="scanRegisters()">Live Scan</button>
     </h2>
-    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-      <select id="regSectionFilter" onchange="filterRegisters()" style="padding:4px 8px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:4px;font-size:12px">
-        <option value="all">All Sections</option>
-      </select>
-      <label style="font-size:12px;display:flex;align-items:center;gap:4px">
-        <input type="checkbox" id="regHideSpare" onchange="filterRegisters()" checked> Hide Spare
-      </label>
-      <span style="font-size:12px;color:var(--dim)" id="regCount">--</span>
+    <div class="chart-box">
+      <canvas id="chartOverview" height="180"></canvas>
     </div>
-    <div class="scroll-box" style="max-height:400px">
-      <table class="audit-table" style="font-size:11px">
-        <thead><tr><th>Address</th><th>Name</th><th>Type</th><th>Bit</th><th>Section</th><th>Value</th><th>Raw</th></tr></thead>
+    <div class="chart-legend">
+      <span><span class="dot" style="background:var(--accent)"></span>RPM</span>
+      <span><span class="dot" style="background:var(--dim)"></span>Setpoint</span>
+      <span><span class="dot" style="background:rgba(34,197,94,0.3)"></span>Bounds</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ LIVE CHARTS ═══════════ -->
+<div class="panel" id="panel-live">
+  <div class="grid grid-wide">
+    <div class="card">
+      <h2>RPM vs Setpoint</h2>
+      <canvas id="chartRpm" height="160"></canvas>
+      <div class="chart-legend">
+        <span><span class="dot" style="background:var(--accent)"></span>RPM</span>
+        <span><span class="dot" style="background:var(--dim)"></span>Setpoint</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Swash Output vs Bounds</h2>
+      <canvas id="chartSwash" height="160"></canvas>
+      <div class="chart-legend">
+        <span><span class="dot" style="background:var(--cyan)"></span>Output</span>
+        <span><span class="dot" style="background:var(--red)"></span>Lower</span>
+        <span><span class="dot" style="background:var(--red)"></span>Upper</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>DNIAE over time</h2>
+      <canvas id="chartDniae" height="160"></canvas>
+      <div class="chart-legend">
+        <span><span class="dot" style="background:var(--yellow)"></span>DNIAE</span>
+        <span><span class="dot" style="background:var(--orange)"></span>Saturation</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Torque & Temperature</h2>
+      <canvas id="chartEnv" height="160"></canvas>
+      <div class="chart-legend">
+        <span><span class="dot" style="background:var(--purple)"></span>Torque</span>
+        <span><span class="dot" style="background:var(--orange)"></span>Temp</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ SAFETY ═══════════ -->
+<div class="panel" id="panel-safety">
+  <div class="grid">
+    <div class="card">
+      <h2><span class="icon">&#128274;</span>State Machine</h2>
+      <div style="text-align:center;padding:20px 0">
+        <div class="badge" id="safetyStateBig" style="font-size:20px;padding:10px 24px">--</div>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">Heartbeat</div><div class="kpi-value sm" id="safetyHb">0</div></div>
+        <div class="kpi"><div class="kpi-label">Rejections</div><div class="kpi-value sm" id="safetyRej">0</div></div>
+        <div class="kpi"><div class="kpi-label">Cooldown</div><div class="kpi-value sm" id="safetyCd">0s</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Last Known Good</h2>
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">Lower</div><div class="kpi-value sm" id="safetyLkgLower">--</div></div>
+        <div class="kpi"><div class="kpi-label">Upper</div><div class="kpi-value sm" id="safetyLkgUpper">--</div></div>
+        <div class="kpi"><div class="kpi-label">IAE</div><div class="kpi-value sm" id="safetyLkgIae">--</div></div>
+      </div>
+      <div class="mt-12 small muted">The gate rolls back to these values on any rejection. Updated after a successful 60 s trial.</div>
+    </div>
+    <div class="card">
+      <h2>Inhibitors</h2>
+      <div class="mt-8">
+        <div class="row between mt-8"><span class="small">ESD active</span><span class="badge" id="safetyEsd">--</span></div>
+        <div class="row between mt-8"><span class="small">Bump lockout</span><span class="badge" id="safetyBump">--</span></div>
+        <div class="row between mt-8"><span class="small">Windup detected</span><span class="badge" id="safetyWindup">--</span></div>
+        <div class="row between mt-8"><span class="small">Change detected</span><span class="badge" id="safetyChange">--</span></div>
+      </div>
+    </div>
+    <div class="card full-width">
+      <h2>Recent Audit Events <div class="card-header-actions"><button class="btn small" onclick="loadAudit()">Refresh</button></div></h2>
+      <div class="scroll-box">
+        <table>
+          <thead><tr><th>Time</th><th>Event</th><th>Old</th><th>New</th><th>State</th><th>Reason</th><th>HB</th><th>Rej</th></tr></thead>
+          <tbody id="safetyAuditBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ PERFORMANCE ═══════════ -->
+<div class="panel" id="panel-performance">
+  <div class="grid">
+    <div class="card">
+      <h2>Error Statistics</h2>
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">DNIAE</div><div class="kpi-value" id="perfDniae">--</div></div>
+        <div class="kpi"><div class="kpi-label">Mean Err</div><div class="kpi-value sm" id="perfMeanErr">--</div></div>
+        <div class="kpi"><div class="kpi-label">RMSE</div><div class="kpi-value sm" id="perfRmse">--</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Failure Mode</h2>
+      <div class="kpi-value sm mt-8" id="perfMode" style="padding:16px 0;text-align:center;font-size:22px">--</div>
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">Confidence</div><div class="kpi-value sm" id="perfConf">0%</div></div>
+        <div class="kpi"><div class="kpi-label">Valid samples</div><div class="kpi-value sm" id="perfValid">0/40</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>CUSUM Detectors</h2>
+      <div class="row between mt-8"><span class="small">Baseline collected</span><span class="badge" id="cusumBase">--</span></div>
+      <div class="row between mt-8"><span class="small">Mean shift alarms</span><span id="cusumMean" class="small" style="font-family:var(--mono)">0</span></div>
+      <div class="row between mt-8"><span class="small">Variance alarms</span><span id="cusumVar" class="small" style="font-family:var(--mono)">0</span></div>
+      <div class="row between mt-8"><span class="small">Oscillation alarms</span><span id="cusumOsc" class="small" style="font-family:var(--mono)">0</span></div>
+    </div>
+    <div class="card full-width">
+      <h2>DNIAE & Saturation History</h2>
+      <canvas id="chartPerfHistory" height="150"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ CONTROLS ═══════════ -->
+<div class="panel" id="panel-controls">
+  <div class="grid">
+    <div class="card">
+      <h2><span class="icon">&#9889;</span>Adaptive</h2>
+      <p class="small muted">Currently: <b id="ctrlStateLabel">--</b></p>
+      <div class="btn-row mt-12">
+        <button class="btn success" onclick="apiCall('POST','/api/control/enable',{},'Enabled')">Enable</button>
+        <button class="btn danger" onclick="apiCall('POST','/api/control/disable',{},'Disabled')">Disable</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Phase</h2>
+      <p class="small muted">Controls whether writes to the PLC are issued.</p>
+      <div class="input-group mt-12">
+        <select id="phaseSelect">
+          <option value="A">A — Observer</option>
+          <option value="B">B — Advisory</option>
+          <option value="C">C — Limited Writes</option>
+          <option value="D">D — Full Authority</option>
+        </select>
+        <button class="btn primary" onclick="setPhase()">Apply</button>
+      </div>
+      <div class="small muted mt-8">Phases C and D require written sign-off (MASTER_CONTEXT §13).</div>
+    </div>
+
+    <div class="card">
+      <h2>Drill Depth</h2>
+      <p class="small muted">Used by the oscillation tuner for torsional stiffness K = 39,760 / depth.</p>
+      <div class="input-group mt-12">
+        <input type="number" id="depthInput" value="3000" min="100" step="100">
+        <span class="small muted">ft</span>
+        <button class="btn primary" onclick="setDepth()">Apply</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Alarms & Notifications</h2>
+      <div class="btn-row">
+        <button class="btn small" onclick="openAlarms()">Open Alarms Drawer</button>
+        <button class="btn small danger" onclick="dismissAlarms()">Clear All</button>
+      </div>
+      <div class="small muted mt-8">Total active alarms: <b id="alarmsTotal">0</b></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ REGISTERS ═══════════ -->
+<div class="panel" id="panel-registers">
+  <div class="card">
+    <h2><span class="icon">&#128270;</span>Register Catalog
+      <div class="card-header-actions">
+        <button class="btn small" onclick="loadRegisters()">Load Map</button>
+        <button class="btn small success" onclick="scanRegisters()">Live Scan</button>
+      </div>
+    </h2>
+    <div class="row mt-8" style="flex-wrap:wrap;gap:8px">
+      <select id="regSectionFilter" onchange="filterRegisters()"><option value="all">All sections</option></select>
+      <input type="text" id="regNameFilter" placeholder="Filter by name..." oninput="filterRegisters()" style="width:200px">
+      <label><input type="checkbox" id="regHideSpare" checked onchange="filterRegisters()"> Hide spare</label>
+      <label><input type="checkbox" id="regOnlyWritable" onchange="filterRegisters()"> Writable only</label>
+      <div class="spacer"></div>
+      <span class="small muted" id="regCount">--</span>
+    </div>
+    <div class="scroll-box mt-12" style="max-height:520px">
+      <table>
+        <thead><tr><th>Address</th><th>Original</th><th>Name</th><th>Type</th><th>Bit</th><th>Section</th><th>Value</th><th>Raw</th></tr></thead>
         <tbody id="regBody"></tbody>
       </table>
     </div>
   </div>
+</div>
 
-  <!-- ── Simulation Sandbox ── -->
-  <div class="card full-width">
-    <h2><span class="icon">&#127919;</span> Simulation Sandbox</h2>
-    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-      <div>
-        <div class="kpi-label">Scenario</div>
-        <select id="simScenario" style="padding:6px 10px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:6px;font-family:var(--mono);font-size:13px;min-width:180px">
+<!-- ═══════════ SIMULATION ═══════════ -->
+<div class="panel" id="panel-simulation">
+  <div class="card">
+    <h2><span class="icon">&#127919;</span>Scenario Sandbox</h2>
+    <p class="small muted">Run synthetic drilling scenarios through the PerformanceMonitor to verify classifier + DNIAE behaviour without touching the PLC.</p>
+    <div class="row mt-12" style="flex-wrap:wrap;gap:10px;align-items:flex-end">
+      <div><div class="kpi-label">Scenario</div>
+        <select id="simScenario" style="min-width:200px">
           <option value="normal">Normal Drilling</option>
           <option value="bias">Bias Event</option>
           <option value="oscillation">Oscillation</option>
@@ -358,102 +559,249 @@ a { color: var(--accent); }
           <option value="connection">Pipe Connection</option>
         </select>
       </div>
-      <div>
-        <div class="kpi-label">Duration (s)</div>
-        <input type="number" id="simDuration" value="300" min="30" max="600" step="30" style="padding:6px 10px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:6px;font-family:var(--mono);font-size:13px;width:80px">
-      </div>
-      <div>
-        <div class="kpi-label">Setpoint (RPM)</div>
-        <input type="number" id="simSetpoint" value="60" min="0" max="220" step="10" style="padding:6px 10px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:6px;font-family:var(--mono);font-size:13px;width:80px">
-      </div>
+      <div><div class="kpi-label">Duration (s)</div><input type="number" id="simDuration" value="300" min="30" max="600" step="30" style="width:80px"></div>
+      <div><div class="kpi-label">Setpoint</div><input type="number" id="simSetpoint" value="60" min="0" max="220" step="10" style="width:80px"></div>
       <button class="btn success" onclick="runSimulation()" id="simRunBtn">Run Simulation</button>
     </div>
-    <div id="simResults" style="display:none;margin-top:16px">
+    <div id="simResults" class="hidden mt-16">
       <div class="kpi-row">
-        <div class="kpi"><div class="kpi-label">Samples</div><div class="kpi-value small" id="simSamples">--</div></div>
-        <div class="kpi"><div class="kpi-label">Labels</div><div class="kpi-value small" id="simLabels" style="font-size:12px">--</div></div>
+        <div class="kpi"><div class="kpi-label">Samples</div><div class="kpi-value sm" id="simSamples">--</div></div>
+        <div class="kpi" style="flex:3"><div class="kpi-label">Labels</div><div class="kpi-value xs" id="simLabels">--</div></div>
       </div>
-      <div style="margin-top:12px">
-        <div class="kpi-label">Performance Metrics Over Time</div>
-        <div class="scroll-box" style="max-height:250px;margin-top:4px">
-          <table class="audit-table" style="font-size:11px">
-            <thead><tr><th>Time</th><th>DNIAE</th><th>Mode</th><th>Conf</th><th>RMSE</th><th>Sat%</th><th>Windup</th><th>Change</th></tr></thead>
-            <tbody id="simMetricsBody"></tbody>
-          </table>
-        </div>
-      </div>
-      <div style="margin-top:12px">
-        <div class="kpi-label">RPM vs Setpoint</div>
-        <canvas id="simChart" height="150" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-top:4px"></canvas>
+      <div class="kpi-label mt-12">RPM timeline (colored regions = non-normal labels)</div>
+      <canvas id="simChart" height="180" class="mt-8"></canvas>
+      <div class="kpi-label mt-16">Metrics per 10 s window</div>
+      <div class="scroll-box mt-8" style="max-height:260px">
+        <table>
+          <thead><tr><th>Time</th><th>DNIAE</th><th>Mode</th><th>Conf</th><th>RMSE</th><th>Sat%</th><th>Windup</th><th>Change</th></tr></thead>
+          <tbody id="simMetricsBody"></tbody>
+        </table>
       </div>
     </div>
   </div>
+</div>
 
-  <!-- ── Audit Log ── -->
-  <div class="card full-width">
-    <h2><span class="icon">&#128220;</span> Audit Trail <button class="btn" style="margin-left:auto;font-size:11px;padding:3px 10px" onclick="loadAudit()">Refresh</button></h2>
-    <div class="scroll-box">
-      <table class="audit-table">
-        <thead><tr><th>Time</th><th>Event</th><th>Old</th><th>New</th><th>State</th><th>Reason</th><th>HB</th><th>Rej</th></tr></thead>
+<!-- ═══════════ TRAINING ═══════════ -->
+<div class="panel" id="panel-training">
+  <div class="grid">
+    <div class="card">
+      <h2><span class="icon">&#129504;</span>Deployed Models
+        <div class="card-header-actions"><button class="btn small" onclick="loadTraining()">Refresh</button></div>
+      </h2>
+      <div id="deployedModels" class="mt-8 small">Loading...</div>
+    </div>
+    <div class="card">
+      <h2>Training Artefacts (local)</h2>
+      <div id="trainingArtefacts" class="mt-8 small">Loading...</div>
+    </div>
+    <div class="card full-width">
+      <h2>How to trigger training</h2>
+      <div class="small mt-8 muted">
+        Run from repo root on your dev machine (not the rig PC):
+      </div>
+      <pre class="mt-8" style="background:var(--bg);border:1px solid var(--border);padding:10px;border-radius:6px;font-family:var(--mono);font-size:11px;overflow-x:auto">
+# Full pipeline: sim data -> train -> download TFLite -> deploy
+python -m training.auto_pipeline --config training/remote_config.yaml --deploy
+
+# With real Phase A/B CSV logs from rig PC
+python -m training.auto_pipeline --config training/remote_config.yaml --real-data --deploy
+
+# Just re-deploy already-downloaded models
+python -m training.deploy --models-dir training/models
+      </pre>
+      <div class="small mt-8 muted">Full plan: <a href="/static/../../HXI_ML_TRAINING_PLAN.md">HXI_ML_TRAINING_PLAN.md</a></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ DIAGNOSTICS ═══════════ -->
+<div class="panel" id="panel-diagnostics">
+  <div class="grid">
+    <div class="card">
+      <h2><span class="icon">&#128268;</span>Transport
+        <div class="card-header-actions"><button class="btn small" onclick="loadDiagnostics()">Refresh</button></div>
+      </h2>
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">Protocol</div><div class="kpi-value sm" id="diagTransport">--</div></div>
+        <div class="kpi"><div class="kpi-label">Healthy</div><div class="kpi-value sm" id="diagHealthy">--</div></div>
+        <div class="kpi"><div class="kpi-label">Failures</div><div class="kpi-value sm" id="diagFailures">0</div></div>
+      </div>
+      <div class="small muted mt-8" id="diagEndpoint">--</div>
+    </div>
+    <div class="card">
+      <h2>Byte Order (FLOAT32)</h2>
+      <div class="kpi-value mt-8" id="diagWordOrder" style="font-size:26px;text-align:center;padding:16px 0">--</div>
+      <div class="small muted">Set by commissioning test 1. Options: ABCD (big-endian), CDAB (low-word first). Must be pinned in register_map.py before Phase B.</div>
+    </div>
+    <div class="card">
+      <h2>Runtime counters</h2>
+      <div class="row between mt-8 small"><span>Heartbeat counter</span><span id="diagHb" style="font-family:var(--mono)">0</span></div>
+      <div class="row between mt-8 small"><span>Total adaptations</span><span id="diagAdapts" style="font-family:var(--mono)">0</span></div>
+      <div class="row between mt-8 small"><span>Consecutive rejections</span><span id="diagRej" style="font-family:var(--mono)">0</span></div>
+      <div class="row between mt-8 small"><span>Cooldown remaining</span><span id="diagCd" style="font-family:var(--mono)">0s</span></div>
+      <div class="row between mt-8 small"><span>Advisor dwell</span><span id="diagDwell" style="font-family:var(--mono)">0s</span></div>
+    </div>
+    <div class="card">
+      <h2>Configuration
+        <div class="card-header-actions"><button class="btn small" onclick="loadConfig()">Refresh</button></div>
+      </h2>
+      <pre id="configDump" class="scroll-box small" style="max-height:280px;font-family:var(--mono);font-size:10px;padding:8px;background:var(--bg);border-radius:4px;border:1px solid var(--border)">Loading...</pre>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ AUDIT ═══════════ -->
+<div class="panel" id="panel-audit">
+  <div class="card">
+    <h2><span class="icon">&#128220;</span>Audit Trail
+      <div class="card-header-actions">
+        <select id="auditEventFilter" onchange="filterAudit()" class="small">
+          <option value="all">All events</option>
+          <option value="WRITE">WRITE</option>
+          <option value="REJECTED">REJECTED</option>
+          <option value="ROLLBACK">ROLLBACK</option>
+          <option value="ACCEPTED">ACCEPTED</option>
+          <option value="ESD_FREEZE">ESD_FREEZE</option>
+        </select>
+        <button class="btn small" onclick="loadAudit()">Refresh</button>
+      </div>
+    </h2>
+    <div class="small muted">Every PLC write attempt is recorded here (including rejections). Immutable, fsync every write.</div>
+    <div class="scroll-box mt-12" style="max-height:560px">
+      <table>
+        <thead><tr><th>Timestamp</th><th>Event</th><th>Old L</th><th>Old U</th><th>New L</th><th>New U</th><th>State</th><th>Reason</th><th>HB</th><th>Rej</th></tr></thead>
         <tbody id="auditBody"></tbody>
       </table>
     </div>
   </div>
-
 </div>
 
-<script>
-// ═══════════════════════════════════════════════════════════════════════════
-// WebSocket connection + UI update loop
-// ═══════════════════════════════════════════════════════════════════════════
+<!-- ═══════════ LOGS ═══════════ -->
+<div class="panel" id="panel-logs">
+  <div class="card">
+    <h2><span class="icon">&#128221;</span>Optimizer Log
+      <div class="card-header-actions">
+        <label class="small"><input type="checkbox" id="logsAutoRefresh"> Auto-refresh</label>
+        <button class="btn small" onclick="loadLogs()">Refresh</button>
+      </div>
+    </h2>
+    <pre id="logsBody" class="scroll-box" style="max-height:600px;font-family:var(--mono);font-size:11px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px">Loading...</pre>
+  </div>
+</div>
 
+<!-- ═══════════ FLOATING UI ═══════════ -->
+<button class="alarms-toggle" onclick="openAlarms()" title="Alarms">
+  &#128276;
+  <span class="badge-count hidden" id="alarmsBadge">0</span>
+</button>
+
+<div class="alarms-drawer" id="alarmsDrawer">
+  <h3>
+    Alarms
+    <span>
+      <button class="btn small danger" onclick="dismissAlarms()">Clear</button>
+      <button class="btn small" onclick="closeAlarms()">Close</button>
+    </span>
+  </h3>
+  <div id="alarmsList"><div class="small muted">No alarms.</div></div>
+</div>
+
+<div class="toast-container" id="toasts"></div>
+
+<!-- ═══════════ SCRIPT ═══════════ -->
+<script>
+// ═════════════════════════════════════════════════════════════════
+// State
+// ═════════════════════════════════════════════════════════════════
 let ws = null;
+let lastData = null;
 let lastUpdate = 0;
+let allRegisters = [];
+let auditRows = [];
+let alarms = [];
 const SWASH_MIN = 0, SWASH_MAX = 1000;
 
+// ═════════════════════════════════════════════════════════════════
+// Tab navigation
+// ═════════════════════════════════════════════════════════════════
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => switchTab(t.dataset.tab);
+});
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === `panel-${name}`));
+  localStorage.setItem('hxi_tab', name);
+  // Lazy-load data when entering a tab
+  if (name === 'registers' && allRegisters.length === 0) loadRegisters();
+  if (name === 'audit' || name === 'safety') loadAudit();
+  if (name === 'training') loadTraining();
+  if (name === 'diagnostics') { loadDiagnostics(); loadConfig(); }
+  if (name === 'logs') loadLogs();
+}
+// Restore last tab
+const savedTab = localStorage.getItem('hxi_tab');
+if (savedTab) switchTab(savedTab);
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  const map = {'1':'overview','2':'live','3':'safety','4':'performance','5':'controls',
+               '6':'registers','7':'simulation','8':'training','9':'diagnostics','0':'audit'};
+  if (map[e.key]) { switchTab(map[e.key]); e.preventDefault(); }
+});
+
+// ═════════════════════════════════════════════════════════════════
+// WebSocket
+// ═════════════════════════════════════════════════════════════════
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen = () => { document.getElementById('wsStatus').textContent = 'connected'; };
+  ws.onopen = () => toast('WebSocket connected', 'success');
   ws.onclose = () => {
-    document.getElementById('wsStatus').textContent = 'disconnected';
     document.getElementById('connDot').className = 'conn-dot err';
+    document.getElementById('connLabel').textContent = 'Reconnecting...';
     setTimeout(connectWS, 2000);
   };
-  ws.onerror = () => ws.close();
-  ws.onmessage = (evt) => {
-    const d = JSON.parse(evt.data);
-    lastUpdate = Date.now();
-    updateUI(d);
+  ws.onerror = () => { try { ws.close(); } catch(e) {} };
+  ws.onmessage = evt => {
+    try {
+      const d = JSON.parse(evt.data);
+      lastData = d;
+      lastUpdate = Date.now();
+      applyUpdate(d);
+    } catch(e) { console.error('WS parse error', e); }
   };
 }
 
-function updateUI(d) {
-  // Connection
+// ═════════════════════════════════════════════════════════════════
+// Apply snapshot to UI
+// ═════════════════════════════════════════════════════════════════
+function applyUpdate(d) {
+  // ── Header ──
   const conn = d.connection || {};
   const dot = document.getElementById('connDot');
-  const label = document.getElementById('connLabel');
-  if (conn.healthy) { dot.className='conn-dot ok'; label.textContent='Connected'; }
-  else if (conn.connected) { dot.className='conn-dot warn'; label.textContent=`Degraded (${conn.consecutive_failures} fails)`; }
-  else { dot.className='conn-dot err'; label.textContent='Disconnected'; }
+  const lbl = document.getElementById('connLabel');
+  if (conn.healthy) { dot.className='conn-dot ok'; lbl.textContent='Healthy'; }
+  else if (conn.connected) { dot.className='conn-dot warn'; lbl.textContent=`Degraded (${conn.consecutive_failures})`; }
+  else { dot.className='conn-dot err'; lbl.textContent='Disconnected'; }
 
-  // Phase + State badges
   const pb = document.getElementById('phaseBadge');
-  pb.textContent = 'Phase ' + d.phase;
-  pb.className = 'phase-badge phase-' + d.phase;
+  pb.textContent = d.phase; pb.className = 'badge phase-' + d.phase;
   const sb = document.getElementById('stateBadge');
-  sb.textContent = d.state_machine;
-  sb.className = 'state-badge state-' + d.state_machine;
-  document.getElementById('gateState').textContent = d.state_machine;
-  document.getElementById('gateState').className = 'state-badge state-' + d.state_machine;
+  sb.textContent = d.state_machine; sb.className = 'badge state-' + d.state_machine;
+  const sbb = document.getElementById('safetyStateBig');
+  sbb.textContent = d.state_machine; sbb.className = 'badge state-' + d.state_machine;
+  document.getElementById('transportLabel').textContent = (d.config && d.config.plc_host) ? (d.config.plc_host.split(':')[0]) : '--';
+  document.getElementById('hbLabel').textContent = (d.safety && d.safety.heartbeat_counter) || 0;
 
-  // Live telemetry
+  // ── Live KPIs ──
   const live = d.live || {};
   const rpm = live.rpm || 0;
   const sp = live.setpoint || 0;
-  document.getElementById('liveRpm').textContent = rpm.toFixed(1);
-  document.getElementById('liveSetpoint').textContent = sp.toFixed(1);
-  document.getElementById('liveError').innerHTML = (sp - rpm).toFixed(1) + ' <span class="kpi-unit">RPM</span>';
+  setTxt('kpiRpm', rpm.toFixed(1));
+  setTxt('kpiSetpoint', sp.toFixed(1));
+  setTxt('kpiError', (sp - rpm).toFixed(1));
+  setTxt('kpiDepth', (d.config && d.config.drill_depth_ft) ? (d.config.drill_depth_ft + ' ft') : '--');
 
   // Swash bar
   const lo = live.active_lower || 0, up = live.active_upper || 0, out = live.swash_output || 0;
@@ -463,292 +811,487 @@ function updateUI(d) {
   document.getElementById('swashLower').style.left = pct(lo) + '%';
   document.getElementById('swashUpper').style.left = pct(up) + '%';
   document.getElementById('swashOutput').style.left = pct(out) + '%';
-  document.getElementById('lblLower').textContent = lo;
-  document.getElementById('lblOutput').textContent = out;
-  document.getElementById('lblUpper').textContent = up;
+  setTxt('lblLower', lo); setTxt('lblOutput', out); setTxt('lblUpper', up);
 
-  // Temp
+  // Temperature
   const temp = live.loop_temp || 0;
-  const tempEl = document.getElementById('liveTemp');
-  tempEl.innerHTML = temp.toFixed(1) + ' <span class="kpi-unit">&deg;C</span>';
-  tempEl.className = 'kpi-value small ' + (temp > 80 ? 'temp-danger' : temp > 60 ? 'temp-warn' : 'temp-ok');
+  const tempEl = document.getElementById('kpiTemp');
+  tempEl.textContent = temp.toFixed(1) + '°C';
+  tempEl.className = 'kpi-value sm ' + (temp > 80 ? 'temp-danger' : temp > 60 ? 'temp-warn' : 'temp-ok');
 
-  // Metrics
-  const met = d.metrics || {};
-  document.getElementById('metDniae').textContent = (met.dniae !== undefined) ? met.dniae.toFixed(4) : '--';
-  const modeEl = document.getElementById('metMode');
-  modeEl.textContent = met.failure_mode || '--';
-  modeEl.className = 'kpi-value small mode-' + (met.failure_mode || '');
-  document.getElementById('metRmse').innerHTML = ((met.rmse_rpm || 0).toFixed(2)) + ' <span class="kpi-unit">RPM</span>';
+  setTxt('kpiTorque', (live.delivered_torque || 0).toFixed(0));
 
-  // Saturation bars
-  setSatBar('satUpperBar', 'satUpperPct', met.sat_upper || 0);
-  setSatBar('satLowerBar', 'satLowerPct', met.sat_lower || 0);
+  // ── Metrics ──
+  const m = d.metrics || {};
+  setTxt('kpiDniae', m.dniae !== undefined ? m.dniae.toFixed(4) : '--');
+  const modeEl = document.getElementById('kpiMode');
+  modeEl.textContent = m.failure_mode || '--';
+  modeEl.className = 'kpi-value sm mode-' + (m.failure_mode || '');
+  setTxt('kpiRmse', (m.rmse_rpm || 0).toFixed(2));
+  setSatBar('satUpperBar', 'satUpperPct', m.sat_upper || 0);
+  setSatBar('satLowerBar', 'satLowerPct', m.sat_lower || 0);
 
-  document.getElementById('metWindup').textContent = met.is_windup ? 'YES' : 'No';
-  document.getElementById('metWindup').style.color = met.is_windup ? 'var(--red)' : 'var(--green)';
-  document.getElementById('metChange').textContent = met.change_detected ? (met.change_reason || 'YES') : 'No';
-  document.getElementById('metChange').style.color = met.change_detected ? 'var(--orange)' : 'var(--green)';
-  document.getElementById('metValid').textContent = met.n_valid || 0;
+  // Performance tab
+  setTxt('perfDniae', (m.dniae !== undefined) ? m.dniae.toFixed(4) : '--');
+  setTxt('perfMeanErr', (m.mean_error || 0).toFixed(2));
+  setTxt('perfRmse', (m.rmse_rpm || 0).toFixed(2));
+  const perfMode = document.getElementById('perfMode');
+  perfMode.textContent = m.failure_mode || '--';
+  perfMode.className = 'kpi-value sm mode-' + (m.failure_mode || '');
+  setTxt('perfConf', ((m.failure_confidence || 0) * 100).toFixed(0) + '%');
+  setTxt('perfValid', (m.n_valid || 0) + '/40');
 
-  // Safety
+  // ── Safety ──
   const safety = d.safety || {};
-  document.getElementById('gateRej').textContent = safety.consecutive_rejections || 0;
-  document.getElementById('gateHb').textContent = safety.heartbeat_counter || 0;
-  document.getElementById('gateCooldown').textContent = (safety.cooldown_remaining || 0).toFixed(0) + 's';
-  const esdEl = document.getElementById('gateEsd');
-  esdEl.textContent = safety.esd_active ? 'ACTIVE' : 'Clear';
-  esdEl.style.color = safety.esd_active ? 'var(--red)' : 'var(--green)';
-  const bumpEl = document.getElementById('gateBump');
-  bumpEl.textContent = safety.bump_lockout ? 'LOCKED' : 'Clear';
-  bumpEl.style.color = safety.bump_lockout ? 'var(--yellow)' : 'var(--green)';
+  setTxt('kpiRej', safety.consecutive_rejections || 0);
+  setTxt('kpiCooldown', (safety.cooldown_remaining || 0).toFixed(0) + 's');
+  setTxt('safetyHb', safety.heartbeat_counter || 0);
+  setTxt('safetyRej', safety.consecutive_rejections || 0);
+  setTxt('safetyCd', (safety.cooldown_remaining || 0).toFixed(0) + 's');
+  setBadge('kpiEsd', safety.esd_active ? 'ACTIVE' : 'Clear', safety.esd_active ? 'state-ESD' : '');
+  setBadge('kpiBump', safety.bump_lockout ? 'LOCKED' : 'Clear', safety.bump_lockout ? 'state-REJECTED' : '');
+  setBadge('kpiWindup', m.is_windup ? 'YES' : 'No', m.is_windup ? 'state-ESD' : '');
+  setBadge('safetyEsd', safety.esd_active ? 'ACTIVE' : 'Clear', safety.esd_active ? 'state-ESD' : '');
+  setBadge('safetyBump', safety.bump_lockout ? 'LOCKED' : 'Clear', safety.bump_lockout ? 'state-REJECTED' : '');
+  setBadge('safetyWindup', m.is_windup ? 'YES' : 'No', m.is_windup ? 'state-ESD' : '');
+  setBadge('safetyChange', m.change_detected ? (m.change_reason || 'YES') : 'No', m.change_detected ? 'state-REJECTED' : '');
 
   // LKG
   const bounds = d.bounds || {};
-  document.getElementById('lkgLower').textContent = bounds.lkg_lower || 0;
-  document.getElementById('lkgUpper').textContent = bounds.lkg_upper || 0;
-  document.getElementById('lkgIae').textContent = (bounds.lkg_iae !== undefined && bounds.lkg_iae < 1e6) ? bounds.lkg_iae.toFixed(4) : 'inf';
+  setTxt('lkgLower', bounds.lkg_lower || 0);
+  setTxt('lkgUpper', bounds.lkg_upper || 0);
+  setTxt('lkgIae', bounds.lkg_iae !== null && bounds.lkg_iae !== undefined ? bounds.lkg_iae.toFixed(4) : 'inf');
+  setTxt('safetyLkgLower', bounds.lkg_lower || 0);
+  setTxt('safetyLkgUpper', bounds.lkg_upper || 0);
+  setTxt('safetyLkgIae', bounds.lkg_iae !== null && bounds.lkg_iae !== undefined ? bounds.lkg_iae.toFixed(4) : 'inf');
 
-  // Advisor
+  // Adaptation / advisor
   const adv = d.advisor || {};
-  document.getElementById('advTrimUp').textContent = (adv.trim_upper || 0).toFixed(2);
-  document.getElementById('advTrimLo').textContent = (adv.trim_lower || 0).toFixed(2);
-  document.getElementById('advDwell').innerHTML = (adv.dwell_counter || 0).toFixed(1) + ' <span class="kpi-unit">/ 20s</span>';
-  document.getElementById('advTotal').textContent = adv.total_adaptations || 0;
+  setTxt('kpiTotalAdapt', adv.total_adaptations || 0);
+  setTxt('kpiTrimUp', (adv.trim_upper || 0).toFixed(2));
+  setTxt('kpiTrimLo', (adv.trim_lower || 0).toFixed(2));
+  setTxt('kpiDwell', (adv.dwell_counter || 0).toFixed(1));
 
-  // Config
-  const cfg = d.config || {};
-  document.getElementById('cfgHost').textContent = cfg.plc_host || '--';
-  document.getElementById('cfgDeadband').innerHTML = (cfg.deadband_rpm || 0).toFixed(1) + ' <span class="kpi-unit">RPM</span>';
-  document.getElementById('depthInput').value = cfg.drill_depth_ft || 3000;
-  document.getElementById('phaseSelect').value = d.phase;
+  // Controls
+  setTxt('ctrlStateLabel', d.state_machine);
+  if (d.phase) document.getElementById('phaseSelect').value = d.phase;
+  const depth = (d.config && d.config.drill_depth_ft);
+  if (depth) document.getElementById('depthInput').value = depth;
 
-  // Control state label
-  document.getElementById('ctrlStateLabel').textContent = d.state_machine;
+  // Alarms
+  if (d.new_alarms && d.new_alarms.length) {
+    for (const a of d.new_alarms) addAlarm(a);
+  }
+
+  // Redraw charts if their tab is active
+  if (document.getElementById('panel-overview').classList.contains('active')) drawOverviewChart();
+  if (document.getElementById('panel-live').classList.contains('active')) drawLiveCharts();
+  if (document.getElementById('panel-performance').classList.contains('active')) drawPerfChart();
 }
 
-function setSatBar(barId, pctId, value) {
-  const pct = Math.min(100, value * 100);
-  const bar = document.getElementById(barId);
-  bar.style.width = pct + '%';
-  bar.className = 'bar-fill ' + (pct > 40 ? 'red' : pct > 20 ? 'orange' : pct > 5 ? 'yellow' : 'green');
-  document.getElementById(pctId).textContent = pct.toFixed(0) + '%';
+function setTxt(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+function setBadge(id, txt, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = txt;
+  el.className = 'badge ' + (cls || '');
+}
+function setSatBar(barId, pctId, val) {
+  const pct = Math.min(100, (val || 0) * 100);
+  const b = document.getElementById(barId);
+  if (b) { b.style.width = pct + '%';
+    b.className = 'bar-fill ' + (pct > 40 ? 'red' : pct > 20 ? 'orange' : pct > 5 ? 'yellow' : 'green'); }
+  setTxt(pctId, pct.toFixed(0) + '%');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// API calls
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
+// Charts (pure canvas, no dependencies)
+// ═════════════════════════════════════════════════════════════════
+async function fetchHistory() {
+  try { const r = await fetch('/api/history'); return await r.json(); }
+  catch(e) { return null; }
+}
 
-async function apiPost(url, body) {
+function drawLineChart(canvasId, series, yMin, yMax, xRange) {
+  const c = document.getElementById(canvasId);
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  c.width = c.offsetWidth; const W = c.width, H = c.height;
+  ctx.clearRect(0, 0, W, H);
+  const pad = 6;
+  // Grid
+  ctx.strokeStyle = 'rgba(100,116,139,0.1)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad + (H - 2 * pad) * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - pad, y); ctx.stroke();
+  }
+  // Y axis labels
+  ctx.fillStyle = '#64748b'; ctx.font = '9px monospace';
+  for (let i = 0; i <= 4; i++) {
+    const y = pad + (H - 2 * pad) * i / 4;
+    const v = yMax - (yMax - yMin) * i / 4;
+    ctx.fillText(v.toFixed(0), 2, y + 3);
+  }
+  // Data lines
+  for (const s of series) {
+    if (!s.data || s.data.length < 2) continue;
+    ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.5;
+    ctx.setLineDash(s.dashed ? [4, 4] : []);
+    ctx.beginPath();
+    for (let i = 0; i < s.data.length; i++) {
+      const v = s.data[i];
+      if (v === null || v === undefined) continue;
+      const x = pad + 22 + (W - pad - 22 - pad) * i / Math.max(1, s.data.length - 1);
+      const y = pad + (H - 2 * pad) * (1 - (v - yMin) / Math.max(0.001, yMax - yMin));
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+async function drawOverviewChart() {
+  const h = await fetchHistory();
+  if (!h || !h.rpm) return;
+  const allVals = (h.rpm || []).concat(h.setpoint || []).filter(v => v !== null);
+  let yMin = Math.min(...allVals, 0) - 5;
+  let yMax = Math.max(...allVals, 10) + 5;
+  drawLineChart('chartOverview', [
+    { data: h.setpoint, color: '#64748b', dashed: true },
+    { data: h.rpm, color: '#3b82f6', width: 2 },
+  ], yMin, yMax);
+}
+
+async function drawLiveCharts() {
+  const h = await fetchHistory();
+  if (!h) return;
+  const rpmAll = (h.rpm || []).concat(h.setpoint || []).filter(v => v !== null);
+  drawLineChart('chartRpm', [
+    { data: h.setpoint, color: '#64748b', dashed: true },
+    { data: h.rpm, color: '#3b82f6', width: 2 },
+  ], Math.min(...rpmAll, 0) - 5, Math.max(...rpmAll, 10) + 5);
+
+  const swAll = (h.swash || []).concat(h.lower || [], h.upper || []).filter(v => v !== null);
+  drawLineChart('chartSwash', [
+    { data: h.lower, color: '#ef4444', dashed: true },
+    { data: h.upper, color: '#ef4444', dashed: true },
+    { data: h.swash, color: '#06b6d4', width: 2 },
+  ], Math.min(...swAll, 0) - 20, Math.max(...swAll, 1000) + 20);
+
+  const dniae = (h.dniae || []).filter(v => v !== null);
+  const sat = (h.sat_total || []).filter(v => v !== null);
+  drawLineChart('chartDniae', [
+    { data: h.sat_total, color: '#f97316', width: 1.5 },
+    { data: h.dniae, color: '#eab308', width: 2 },
+  ], 0, Math.max(0.1, ...dniae, ...sat) * 1.2);
+
+  const tempAll = (h.temp || []).filter(v => v !== null);
+  const torqueAll = (h.torque || []).filter(v => v !== null);
+  drawLineChart('chartEnv', [
+    { data: h.torque ? h.torque.map(v => v === null ? null : v / 100) : [], color: '#a855f7', width: 1.5 },
+    { data: h.temp, color: '#f97316', width: 2 },
+  ], Math.min(...tempAll, 0) - 5, Math.max(...tempAll, ...(torqueAll.map(v => v/100)), 80) + 10);
+}
+
+async function drawPerfChart() {
+  const h = await fetchHistory();
+  if (!h) return;
+  const dniae = (h.dniae || []).filter(v => v !== null);
+  drawLineChart('chartPerfHistory', [
+    { data: h.sat_total, color: '#f97316', width: 1.5 },
+    { data: h.dniae, color: '#eab308', width: 2 },
+  ], 0, Math.max(0.1, ...dniae, ...(h.sat_total || []).filter(v=>v!==null)) * 1.2);
+}
+
+setInterval(() => {
+  if (document.getElementById('panel-overview').classList.contains('active')) drawOverviewChart();
+  if (document.getElementById('panel-live').classList.contains('active')) drawLiveCharts();
+  if (document.getElementById('panel-performance').classList.contains('active')) drawPerfChart();
+}, 1000);
+
+// ═════════════════════════════════════════════════════════════════
+// API helpers
+// ═════════════════════════════════════════════════════════════════
+async function apiCall(method, url, body, successMsg) {
   try {
-    const resp = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body || {}) });
-    if (!resp.ok) { const e = await resp.json(); alert('Error: ' + (e.detail || resp.statusText)); }
-  } catch(e) { alert('Network error: ' + e.message); }
+    const opts = { method, headers: {'Content-Type':'application/json'} };
+    if (body) opts.body = JSON.stringify(body);
+    const r = await fetch(url, opts);
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({detail: r.statusText}));
+      toast('Error: ' + (e.detail || r.statusText), 'error');
+      return null;
+    }
+    if (successMsg) toast(successMsg, 'success');
+    return await r.json();
+  } catch(e) { toast('Network: ' + e.message, 'error'); return null; }
 }
 
 function setPhase() {
   const phase = document.getElementById('phaseSelect').value;
-  if (phase === 'C' || phase === 'D') {
-    if (!confirm(`Phase ${phase} enables PLC writes. Are you sure?`)) return;
-  }
-  apiPost('/api/control/phase', {phase});
+  if ((phase === 'C' || phase === 'D') &&
+      !confirm(`Phase ${phase} ENABLES writes to the PLC. Proceed?`)) return;
+  apiCall('POST', '/api/control/phase', {phase}, `Phase → ${phase}`);
 }
-
 function setDepth() {
-  const depth = parseFloat(document.getElementById('depthInput').value);
-  if (isNaN(depth) || depth <= 0) { alert('Invalid depth'); return; }
-  apiPost('/api/control/depth', {depth_ft: depth});
+  const d = parseFloat(document.getElementById('depthInput').value);
+  if (isNaN(d) || d <= 0) { toast('Invalid depth', 'error'); return; }
+  apiCall('POST', '/api/control/depth', {depth_ft: d}, `Depth → ${d} ft`);
 }
 
-async function loadAudit() {
-  try {
-    const resp = await fetch('/api/audit');
-    const rows = await resp.json();
-    const tbody = document.getElementById('auditBody');
-    tbody.innerHTML = '';
-    rows.reverse().forEach(r => {
-      const tr = document.createElement('tr');
-      const ts = r.timestamp ? new Date(parseFloat(r.timestamp)*1000).toLocaleTimeString() : '';
-      tr.innerHTML = `<td>${ts}</td><td class="evt-${r.event_type||''}">${r.event_type||''}</td><td>${r.old_lower||''},${r.old_upper||''}</td><td>${r.new_lower||''},${r.new_upper||''}</td><td>${r.state||''}</td><td>${r.reason||''}</td><td>${r.heartbeat_seq||''}</td><td>${r.consecutive_rej||''}</td>`;
-      tbody.appendChild(tr);
-    });
-  } catch(e) { console.error('Audit load failed:', e); }
-}
+function exportHistory() { window.location = '/api/export/history.csv'; }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Register Scanner
-// ═══════════════════════════════════════════════════════════════════════════
-
-let _allRegisters = [];
-
+// ═════════════════════════════════════════════════════════════════
+// Registers
+// ═════════════════════════════════════════════════════════════════
 async function loadRegisters() {
-  try {
-    const resp = await fetch('/api/registers');
-    const data = await resp.json();
-    _allRegisters = data.registers;
-    // Populate section filter
-    const sel = document.getElementById('regSectionFilter');
-    sel.innerHTML = '<option value="all">All Sections</option>';
-    data.sections.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s; opt.textContent = s;
-      sel.appendChild(opt);
-    });
-    document.getElementById('regCount').textContent =
-      `${data.active} active / ${data.total} total — ${data.read_blocks.length} read blocks`;
-    filterRegisters();
-  } catch(e) { alert('Failed to load registers: ' + e.message); }
+  const d = await apiCall('GET', '/api/registers');
+  if (!d) return;
+  allRegisters = d.registers;
+  const sel = document.getElementById('regSectionFilter');
+  sel.innerHTML = '<option value="all">All sections</option>';
+  d.sections.forEach(s => {
+    const o = document.createElement('option'); o.value = s; o.textContent = s;
+    sel.appendChild(o);
+  });
+  setTxt('regCount', `${d.active} active / ${d.total} total — ${d.read_blocks.length} read blocks`);
+  filterRegisters();
 }
-
+async function scanRegisters() {
+  setTxt('regCount', 'Scanning...');
+  const d = await apiCall('GET', '/api/registers/scan');
+  if (!d) { setTxt('regCount', 'Scan failed'); return; }
+  const map = {};
+  d.values.forEach(v => {
+    map[v.ge_address + (v.bit !== null ? `(${v.bit})` : '')] = v;
+  });
+  allRegisters.forEach(r => {
+    const k = r.ge_address + (r.bit !== null ? `(${r.bit})` : '');
+    if (map[k]) { r._val = map[k].value; r._raw = map[k].raw; }
+  });
+  setTxt('regCount', `Scanned ${d.register_count} at ${new Date(d.ts * 1000).toLocaleTimeString()}`);
+  filterRegisters();
+}
 function filterRegisters() {
   const section = document.getElementById('regSectionFilter').value;
+  const name = document.getElementById('regNameFilter').value.toLowerCase();
   const hideSpare = document.getElementById('regHideSpare').checked;
+  const onlyWritable = document.getElementById('regOnlyWritable').checked;
   const tbody = document.getElementById('regBody');
   tbody.innerHTML = '';
-  _allRegisters.forEach(r => {
+  let shown = 0;
+  allRegisters.forEach(r => {
     if (hideSpare && r.is_spare) return;
     if (section !== 'all' && r.section !== section) return;
+    if (name && !r.name.toLowerCase().includes(name)) return;
+    if (onlyWritable && !r.writable) return;
     const tr = document.createElement('tr');
-    const valCell = r._live_value !== undefined ? r._live_value : '';
-    const rawCell = r._live_raw !== undefined ? r._live_raw : '';
-    tr.innerHTML = `<td>${r.ge_address}</td><td style="color:${r.writable?'var(--orange)':'var(--text)'}">${r.name}${r.writable?' &#9998;':''}</td><td>${r.dtype}</td><td>${r.bit !== null ? r.bit : ''}</td><td style="color:var(--dim)">${r.section}</td><td style="font-family:var(--mono)">${valCell}</td><td style="font-family:var(--mono);color:var(--dim)">${rawCell}</td>`;
+    tr.innerHTML = `<td>${r.ge_address}</td><td class="muted">${r.original || ''}</td><td style="color:${r.writable?'var(--orange)':'var(--text)'}">${r.name}${r.writable?' ✎':''}</td><td>${r.dtype}</td><td>${r.bit !== null ? r.bit : ''}</td><td class="muted">${r.section}</td><td>${r._val !== undefined ? r._val : ''}</td><td class="muted">${r._raw !== undefined ? r._raw : ''}</td>`;
+    tbody.appendChild(tr); shown++;
+  });
+  setTxt('regCount', `${shown} shown / ${allRegisters.length} total`);
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Simulation
+// ═════════════════════════════════════════════════════════════════
+async function runSimulation() {
+  const btn = document.getElementById('simRunBtn');
+  btn.disabled = true; btn.textContent = 'Running...';
+  const body = {
+    scenario: document.getElementById('simScenario').value,
+    duration_s: parseInt(document.getElementById('simDuration').value),
+    setpoint: parseFloat(document.getElementById('simSetpoint').value),
+  };
+  const d = await apiCall('POST', '/api/simulate', body);
+  btn.disabled = false; btn.textContent = 'Run Simulation';
+  if (!d) return;
+  document.getElementById('simResults').classList.remove('hidden');
+  setTxt('simSamples', d.sample_count);
+  setTxt('simLabels', Object.entries(d.label_distribution).map(([k,v]) => `${k}:${v}`).join(', '));
+  const tbody = document.getElementById('simMetricsBody');
+  tbody.innerHTML = '';
+  (d.metrics || []).forEach(m => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${m.t.toFixed(1)}s</td><td>${m.dniae.toFixed(4)}</td><td class="mode-${m.mode}">${m.mode}</td><td>${m.confidence}</td><td>${m.rmse.toFixed(2)}</td><td>${(m.sat_total*100).toFixed(0)}%</td><td>${m.is_windup?'Y':'-'}</td><td>${m.change_detected?'Y':'-'}</td>`;
+    tbody.appendChild(tr);
+  });
+  drawSimChart(d.timeseries);
+}
+function drawSimChart(ts) {
+  const c = document.getElementById('simChart');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  c.width = c.offsetWidth;
+  const W = c.width, H = c.height;
+  ctx.clearRect(0, 0, W, H);
+  const n = ts.rpm.length;
+  if (n < 2) return;
+  const tMin = ts.ts[0], tMax = ts.ts[n-1];
+  const all = ts.rpm.concat(ts.setpoint);
+  let yMin = Math.min(...all) - 5, yMax = Math.max(...all) + 5;
+  if (yMax - yMin < 10) { yMin -= 5; yMax += 5; }
+  const xOf = t => ((t - tMin) / (tMax - tMin)) * (W - 20) + 10;
+  const yOf = v => H - 10 - ((v - yMin) / (yMax - yMin)) * (H - 20);
+  const colors = {NORMAL:'transparent', BIAS:'rgba(234,179,8,0.12)', OSCILLATION:'rgba(239,68,68,0.12)',
+    DEADBAND_HUNTING:'rgba(249,115,22,0.12)', SLUGGISH:'rgba(234,179,8,0.12)',
+    WINDUP:'rgba(239,68,68,0.18)', CONDITION_CHANGE:'rgba(59,130,246,0.12)'};
+  for (let i = 0; i < n - 1; i++) {
+    const c = colors[ts.labels[i]];
+    if (c && c !== 'transparent') {
+      ctx.fillStyle = c;
+      ctx.fillRect(xOf(ts.ts[i]), 0, xOf(ts.ts[i+1]) - xOf(ts.ts[i]), H);
+    }
+  }
+  ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1; ctx.setLineDash([4,4]);
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) { const x=xOf(ts.ts[i]), y=yOf(ts.setpoint[i]); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); }
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) { const x=xOf(ts.ts[i]), y=yOf(ts.rpm[i]); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); }
+  ctx.stroke();
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Audit
+// ═════════════════════════════════════════════════════════════════
+async function loadAudit() {
+  const rows = await apiCall('GET', '/api/audit');
+  if (!rows) return;
+  auditRows = rows;
+  setTxt('auditCount', rows.length);
+  renderAudit('auditBody', rows);
+  renderAudit('safetyAuditBody', rows.slice(-30));
+}
+function filterAudit() {
+  const f = document.getElementById('auditEventFilter').value;
+  renderAudit('auditBody', f === 'all' ? auditRows : auditRows.filter(r => r.event_type === f));
+}
+function renderAudit(tbodyId, rows) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  rows.slice().reverse().forEach(r => {
+    const tr = document.createElement('tr');
+    const ts = r.timestamp ? new Date(parseFloat(r.timestamp) * 1000).toLocaleTimeString() : '';
+    tr.innerHTML = `<td>${ts}</td><td class="evt-${r.event_type||''}">${r.event_type||''}</td><td>${r.old_lower||''}</td><td>${r.old_upper||''}</td><td>${r.new_lower||''}</td><td>${r.new_upper||''}</td><td>${r.state||''}</td><td>${r.reason||''}</td><td>${r.heartbeat_seq||''}</td><td>${r.consecutive_rej||''}</td>`;
     tbody.appendChild(tr);
   });
 }
 
-async function scanRegisters() {
-  try {
-    document.getElementById('regCount').textContent = 'Scanning...';
-    const resp = await fetch('/api/registers/scan');
-    if (!resp.ok) { const e = await resp.json(); alert(e.detail || 'Scan failed'); return; }
-    const data = await resp.json();
-    // Merge live values into _allRegisters
-    const valueMap = {};
-    data.values.forEach(v => {
-      const key = v.ge_address + (v.bit !== null ? `(${v.bit})` : '');
-      valueMap[key] = v;
-    });
-    _allRegisters.forEach(r => {
-      const key = r.ge_address + (r.bit !== null ? `(${r.bit})` : '');
-      const v = valueMap[key];
-      if (v) { r._live_value = v.value; r._live_raw = v.raw; }
-    });
-    document.getElementById('regCount').textContent =
-      `Scanned ${data.register_count} registers at ${new Date(data.ts*1000).toLocaleTimeString()}`;
-    filterRegisters();
-  } catch(e) { alert('Scan failed: ' + e.message); }
+// ═════════════════════════════════════════════════════════════════
+// Diagnostics
+// ═════════════════════════════════════════════════════════════════
+async function loadDiagnostics() {
+  const d = await apiCall('GET', '/api/diagnostics');
+  if (!d) return;
+  setTxt('diagTransport', d.transport);
+  setTxt('diagHealthy', d.transport_healthy ? 'Yes' : 'No');
+  setTxt('diagFailures', d.consecutive_failures);
+  setTxt('diagWordOrder', d.verified_word_order || 'UNVERIFIED');
+  setTxt('diagHb', d.heartbeat_counter);
+  setTxt('diagAdapts', d.total_adaptations);
+  setTxt('diagRej', d.consecutive_rejections);
+  setTxt('diagCd', (d.cooldown_remaining || 0).toFixed(0) + 's');
+  setTxt('diagDwell', (d.advisor_dwell || 0).toFixed(1) + 's');
+  const tr = await apiCall('GET', '/api/transport');
+  if (tr) setTxt('diagEndpoint', `${tr.host}:${tr.port}`);
+}
+async function loadConfig() {
+  const d = await apiCall('GET', '/api/config');
+  if (d) document.getElementById('configDump').textContent = JSON.stringify(d, null, 2);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Simulation Sandbox
-// ═══════════════════════════════════════════════════════════════════════════
-
-async function runSimulation() {
-  const btn = document.getElementById('simRunBtn');
-  btn.disabled = true; btn.textContent = 'Running...';
-  try {
-    const body = {
-      scenario: document.getElementById('simScenario').value,
-      duration_s: parseInt(document.getElementById('simDuration').value),
-      setpoint: parseFloat(document.getElementById('simSetpoint').value),
-    };
-    const resp = await fetch('/api/simulate', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(body),
-    });
-    if (!resp.ok) { const e = await resp.json(); alert(e.detail || 'Simulation failed'); return; }
-    const data = await resp.json();
-    document.getElementById('simResults').style.display = 'block';
-    document.getElementById('simSamples').textContent = data.sample_count;
-    const lbls = Object.entries(data.label_distribution).map(([k,v]) => `${k}:${v}`).join(', ');
-    document.getElementById('simLabels').textContent = lbls;
-
-    // Metrics table
-    const mtb = document.getElementById('simMetricsBody');
-    mtb.innerHTML = '';
-    (data.metrics || []).forEach(m => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${m.t.toFixed(1)}s</td><td>${m.dniae.toFixed(4)}</td><td class="mode-${m.mode}">${m.mode}</td><td>${m.confidence}</td><td>${m.rmse.toFixed(2)}</td><td>${(m.sat_total*100).toFixed(0)}%</td><td style="color:${m.is_windup?'var(--red)':'var(--green)'}">${m.is_windup?'YES':'No'}</td><td style="color:${m.change_detected?'var(--orange)':'var(--dim)'}">${m.change_detected?'YES':'No'}</td>`;
-      mtb.appendChild(tr);
-    });
-
-    // Draw chart
-    drawSimChart(data.timeseries);
-  } catch(e) { alert('Error: ' + e.message); }
-  finally { btn.disabled = false; btn.textContent = 'Run Simulation'; }
+// ═════════════════════════════════════════════════════════════════
+// Training
+// ═════════════════════════════════════════════════════════════════
+async function loadTraining() {
+  const d = await apiCall('GET', '/api/training/status');
+  if (!d) return;
+  const deployed = document.getElementById('deployedModels');
+  if (!d.deployed_models.length) {
+    deployed.innerHTML = '<div class="muted">No models deployed. TFLite files go in hxi_optimizer/models/</div>';
+  } else {
+    deployed.innerHTML = d.deployed_models.map(m =>
+      `<div class="row between mt-8"><span>${m.name}</span><span class="muted">${(m.size_bytes/1024).toFixed(1)} KB · ${new Date(m.modified*1000).toLocaleString()}</span></div>`
+    ).join('');
+  }
+  const art = document.getElementById('trainingArtefacts');
+  if (!d.training_artefacts.length) {
+    art.innerHTML = '<div class="muted">No local artefacts yet. Run python -m training.auto_pipeline</div>';
+  } else {
+    art.innerHTML = d.training_artefacts.map(a =>
+      `<div class="row between mt-8"><span>${a.name}</span><span class="muted">${a.has_tflite ? '✓ TFLite' : '(no TFLite)'} · ${new Date(a.modified*1000).toLocaleString()}</span></div>`
+    ).join('');
+  }
 }
 
-function drawSimChart(ts) {
-  const canvas = document.getElementById('simChart');
-  const ctx = canvas.getContext('2d');
-  const W = canvas.offsetWidth; const H = canvas.height;
-  canvas.width = W;
-  ctx.clearRect(0, 0, W, H);
-
-  const n = ts.rpm.length;
-  if (n < 2) return;
-  const tMax = ts.ts[n-1]; const tMin = ts.ts[0];
-  const allVals = ts.rpm.concat(ts.setpoint);
-  let yMin = Math.min(...allVals) - 5;
-  let yMax = Math.max(...allVals) + 5;
-  if (yMax - yMin < 10) { yMin -= 5; yMax += 5; }
-
-  const xOf = t => ((t - tMin) / (tMax - tMin)) * (W - 20) + 10;
-  const yOf = v => H - 10 - ((v - yMin) / (yMax - yMin)) * (H - 20);
-
-  // Label zones by color
-  const labelColors = {NORMAL:'#1e293b', BIAS:'#422006', OSCILLATION:'#3b1919',
-    DEADBAND_HUNTING:'#2d2006', SLUGGISH:'#1c1917', WINDUP:'#450a0a', CONDITION_CHANGE:'#0a2540'};
-  for (let i = 0; i < n-1; i++) {
-    const lbl = ts.labels[i];
-    if (lbl !== 'NORMAL') {
-      ctx.fillStyle = labelColors[lbl] || '#1e293b';
-      ctx.fillRect(xOf(ts.ts[i]), 0, xOf(ts.ts[i+1]) - xOf(ts.ts[i]), H);
-    }
-  }
-
-  // Setpoint line (dashed)
-  ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1;
-  ctx.setLineDash([4, 4]);
-  ctx.beginPath();
-  for (let i = 0; i < n; i++) {
-    const x = xOf(ts.ts[i]), y = yOf(ts.setpoint[i]);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  }
-  ctx.stroke(); ctx.setLineDash([]);
-
-  // RPM line
-  ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  for (let i = 0; i < n; i++) {
-    const x = xOf(ts.ts[i]), y = yOf(ts.rpm[i]);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-
-  // Bounds (lower/upper shading)
-  ctx.fillStyle = 'rgba(34,197,94,0.05)';
-  ctx.beginPath();
-  for (let i = 0; i < n; i++) ctx.lineTo(xOf(ts.ts[i]), yOf(ts.lower[i] / 5));
-  for (let i = n-1; i >= 0; i--) ctx.lineTo(xOf(ts.ts[i]), yOf(ts.upper[i] / 5));
-  ctx.closePath(); ctx.fill();
-
-  // Legend
-  ctx.font = '11px sans-serif';
-  ctx.fillStyle = '#3b82f6'; ctx.fillText('RPM', 15, 14);
-  ctx.fillStyle = '#64748b'; ctx.fillText('Setpoint', 55, 14);
+// ═════════════════════════════════════════════════════════════════
+// Logs
+// ═════════════════════════════════════════════════════════════════
+async function loadLogs() {
+  const d = await apiCall('GET', '/api/logs?lines=400');
+  if (!d) return;
+  document.getElementById('logsBody').textContent = (d.lines || []).join('');
+  const box = document.getElementById('logsBody');
+  box.scrollTop = box.scrollHeight;
 }
-
-// ── Age ticker ──
 setInterval(() => {
-  if (lastUpdate > 0) {
-    const age = ((Date.now() - lastUpdate) / 1000).toFixed(0);
-    document.getElementById('wsAge').textContent = age + 's ago';
-    if (age > 5) document.getElementById('wsStatus').textContent = 'stale';
-  }
-}, 1000);
+  if (document.getElementById('logsAutoRefresh') && document.getElementById('logsAutoRefresh').checked &&
+      document.getElementById('panel-logs').classList.contains('active')) loadLogs();
+}, 3000);
 
-// ── Boot ──
+// ═════════════════════════════════════════════════════════════════
+// Alarms
+// ═════════════════════════════════════════════════════════════════
+function addAlarm(a) {
+  alarms.unshift(a);
+  if (alarms.length > 100) alarms.length = 100;
+  renderAlarms();
+  toast(a.message, a.severity === 'critical' ? 'error' : a.severity === 'warn' ? 'error' : 'info');
+}
+function renderAlarms() {
+  const list = document.getElementById('alarmsList');
+  const badge = document.getElementById('alarmsBadge');
+  setTxt('alarmsTotal', alarms.length);
+  if (!alarms.length) {
+    list.innerHTML = '<div class="small muted">No alarms.</div>';
+    badge.classList.add('hidden');
+    return;
+  }
+  badge.textContent = alarms.length;
+  badge.classList.remove('hidden');
+  list.innerHTML = alarms.map(a => `
+    <div class="alarm-item severity-${a.severity}">
+      <div class="alarm-time">${new Date(a.ts*1000).toLocaleString()}</div>
+      <div class="alarm-msg">${a.message}</div>
+      <div class="alarm-source">${a.source}</div>
+    </div>`).join('');
+}
+function openAlarms() { document.getElementById('alarmsDrawer').classList.add('open'); }
+function closeAlarms() { document.getElementById('alarmsDrawer').classList.remove('open'); }
+async function dismissAlarms() {
+  await apiCall('POST', '/api/alarms/dismiss', {}, 'Alarms cleared');
+  alarms = [];
+  renderAlarms();
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Toasts
+// ═════════════════════════════════════════════════════════════════
+function toast(msg, kind = 'info') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 3000);
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Boot
+// ═════════════════════════════════════════════════════════════════
 connectWS();
 loadAudit();
 setInterval(loadAudit, 30000);
