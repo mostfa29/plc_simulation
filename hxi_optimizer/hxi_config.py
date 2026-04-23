@@ -72,6 +72,38 @@ class Config:
     # Refuse-to-start switch — overridden after byte-order commissioning passes
     require_verified_word_order: bool = True
 
+    # Machine identity (populated by fleet catalog on first connect)
+    ewon_name: Optional[str] = None           # e.g. "Precision Rig 707 3pd HT"
+    equipment_type: Optional[str] = None      # e.g. "hxi_ht"  (auto-filled)
+    auto_detect_machine: bool = True          # recheck identity every 30 s
+
+    # eCatcher / Talk2m integration (auto-detect which eWon is connected)
+    # Without these, the optimizer falls back to log parsing + adapter probing.
+    # Talk2m developer API: https://developer.ewon.biz/content/talk2m-developer-api
+    talk2m_account: Optional[str] = None
+    talk2m_username: Optional[str] = None
+    talk2m_password: Optional[str] = None
+    talk2m_developer_id: Optional[str] = None
+    ecatcher_log_path: Optional[str] = None   # auto-detected if None
+    ecatcher_poll_interval_s: float = 30.0
+
+    # Real-time dataset capture (for future model fine-tuning)
+    dataset_capture_enabled: bool = True      # writes labelled episodes to disk
+    dataset_dir: str = "hxi_optimizer/logs/dataset"
+    auto_segment_connections: bool = True     # split CSV on RPM-to-zero events
+
+    # Dashboard — security + concurrency knobs for production deployment.
+    # If `dashboard_token` is unset AND the HXI_DASHBOARD_TOKEN env var is
+    # unset, auth is DISABLED (backwards compat for local dev). Once either
+    # is set, every non-static / non-healthz request must carry
+    # `Authorization: Bearer <token>` (or `?token=...` for WebSocket).
+    dashboard_token: Optional[str] = None
+    dashboard_host: str = "0.0.0.0"
+    dashboard_port: int = 8420
+    dashboard_endpoint_timeout_s: float = 30.0      # long endpoints aborted after this
+    dashboard_max_body_bytes: int = 1_000_000       # 1 MB POST body cap
+    dashboard_max_concurrent: int = 64              # uvicorn limit_concurrency
+
     # Transport layer — "modbus" (default) or "opcua"
     transport: str = "modbus"
     # OPC UA specific (ignored when transport=="modbus")

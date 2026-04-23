@@ -14,19 +14,204 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import functools
+import hmac
 import json
 import logging
+import os
 import time
+import traceback
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import (
+    FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Depends,
+)
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, ValidationError, field_validator
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.status import (
+    HTTP_401_UNAUTHORIZED, HTTP_413_CONTENT_TOO_LARGE,
+    HTTP_500_INTERNAL_SERVER_ERROR, HTTP_504_GATEWAY_TIMEOUT,
+)
 
 logger = logging.getLogger("dashboard")
 
 STATIC_DIR = Path(__file__).parent / "static"
+SERVER_START_TS = time.time()
+
+# Paths served without auth — root HTML (so the login form can load), static
+# assets, and /healthz for supervision probes. Everything else is gated.
+PUBLIC_PATH_PREFIXES = ("/static", "/favicon.ico")
+PUBLIC_PATHS_EXACT = {"/", "/healthz", "/api/auth/status"}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Pydantic request models (strict validation on state-changing endpoints)
+# ─────────────────────────────────────────────────────────────────────
+
+class PhaseBody(BaseModel):
+    phase: str = Field(..., min_length=1, max_length=4)
+
+
+class DepthBody(BaseModel):
+    depth_ft: float = Field(..., gt=0, le=50000)
+
+
+class AnnotateBody(BaseModel):
+    label: str = Field(..., min_length=1, max_length=64)
+    lookback_s: float = Field(20.0, gt=0, le=600)
+    notes: str = Field("", max_length=500)
+
+    @field_validator("label")
+    @classmethod
+    def _upper(cls, v: str) -> str:
+        return v.strip().upper()
+
+
+class MachineSwitchBody(BaseModel):
+    ewon_name: str = Field(..., min_length=1, max_length=128)
+
+
+class AlarmDismissBody(BaseModel):
+    ts: float | None = None
+    all: bool = False
+
+
+class SimulateBody(BaseModel):
+    scenario: str = Field("normal", max_length=64)
+    duration_s: float = Field(300.0, gt=0, le=600)
+    setpoint: float = Field(60.0, ge=0, le=300)
+    equipment_type: str | None = Field(None, max_length=64)
+    params: dict = Field(default_factory=dict)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Auth + body-size middleware
+# ─────────────────────────────────────────────────────────────────────
+
+def _is_public_path(path: str) -> bool:
+    if path in PUBLIC_PATHS_EXACT:
+        return True
+    for p in PUBLIC_PATH_PREFIXES:
+        if path.startswith(p):
+            return True
+    return False
+
+
+def _configured_token(shared: dict) -> str | None:
+    """Return the configured auth token, or None if auth is disabled."""
+    cfg = shared.get("config")
+    token = getattr(cfg, "dashboard_token", None) if cfg else None
+    if not token:
+        token = os.environ.get("HXI_DASHBOARD_TOKEN")
+    return token or None
+
+
+def _extract_token(request: Request) -> str | None:
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    # Fallback: query param (needed for WebSocket handshakes where custom
+    # headers are hard to attach from the browser).
+    return request.query_params.get("token")
+
+
+class AuthAndBodyMiddleware(BaseHTTPMiddleware):
+    """Gate non-public routes behind Bearer auth + enforce body-size cap."""
+
+    def __init__(self, app, shared: dict):
+        super().__init__(app)
+        self.shared = shared
+
+    async def dispatch(self, request: Request, call_next):
+        # Body-size cap — reject early before the endpoint reads the body
+        cfg = self.shared.get("config")
+        max_bytes = getattr(cfg, "dashboard_max_body_bytes", 1_000_000) if cfg else 1_000_000
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                if int(cl) > max_bytes:
+                    return JSONResponse(
+                        {"error": "request body too large",
+                         "max_bytes": max_bytes},
+                        status_code=HTTP_413_CONTENT_TOO_LARGE,
+                    )
+            except ValueError:
+                pass
+
+        path = request.url.path
+        if _is_public_path(path):
+            return await call_next(request)
+
+        token = _configured_token(self.shared)
+        if token is None:
+            # Auth disabled (dev / legacy) — let everything through
+            return await call_next(request)
+
+        supplied = _extract_token(request)
+        if not supplied or not hmac.compare_digest(supplied, token):
+            return JSONResponse(
+                {"error": "unauthorized",
+                 "hint": "send Authorization: Bearer <token> or ?token=<token>"},
+                status_code=HTTP_401_UNAUTHORIZED,
+            )
+        return await call_next(request)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Timeout + executor helpers
+# ─────────────────────────────────────────────────────────────────────
+
+def _endpoint_timeout(shared: dict) -> float:
+    cfg = shared.get("config")
+    return float(getattr(cfg, "dashboard_endpoint_timeout_s", 30.0) if cfg else 30.0)
+
+
+async def _run_cpu_bound(shared: dict, fn: Callable, *args, **kwargs):
+    """Run a blocking CPU-bound function in the shared ThreadPoolExecutor
+    under a bounded timeout, so a slow endpoint can't starve the 2 Hz
+    read_loop or trip SafetyGate's COMMS_LOSS rollback.
+
+    Raises HTTPException(504) on timeout.
+    """
+    loop = asyncio.get_event_loop()
+    fut = loop.run_in_executor(None, functools.partial(fn, *args, **kwargs))
+    try:
+        return await asyncio.wait_for(fut, timeout=_endpoint_timeout(shared))
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            HTTP_504_GATEWAY_TIMEOUT,
+            f"endpoint exceeded {_endpoint_timeout(shared):.0f}s timeout",
+        )
+
+
+async def _with_timeout(shared: dict, coro: Awaitable):
+    """Wrap an awaitable in the configured endpoint timeout."""
+    try:
+        return await asyncio.wait_for(coro, timeout=_endpoint_timeout(shared))
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            HTTP_504_GATEWAY_TIMEOUT,
+            f"endpoint exceeded {_endpoint_timeout(shared):.0f}s timeout",
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Audit helpers — dashboard operator actions land in the same audit.log
+# as PLC writes so there's one durable source of truth for "what happened".
+# ─────────────────────────────────────────────────────────────────────
+
+def _audit_operator(shared: dict, event_type: str, reason: str) -> None:
+    audit = shared.get("audit")
+    if audit is None:
+        logger.warning(f"no audit logger — would have written {event_type}: {reason}")
+        return
+    try:
+        audit.log_event(event_type=f"DASHBOARD_{event_type}", reason=reason)
+    except Exception as e:
+        logger.error(f"audit write failed for {event_type}: {e}")
 
 
 def create_app(shared: dict) -> FastAPI:
@@ -47,6 +232,29 @@ def create_app(shared: dict) -> FastAPI:
     app = FastAPI(title="HXI Optimizer Dashboard", docs_url=None, redoc_url=None)
     app.state.shared = shared
 
+    # ─── Auth + body-size middleware (runs before every route) ──────────
+    app.add_middleware(AuthAndBodyMiddleware, shared=shared)
+
+    # ─── Global exception handler — mask stack traces, log with context ─
+    @app.exception_handler(Exception)
+    async def _global_exception_handler(request: Request, exc: Exception):
+        # HTTPException is handled by FastAPI's default handler before this
+        logger.error(
+            f"unhandled error at {request.method} {request.url.path}: "
+            f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+        )
+        return JSONResponse(
+            {"error": "internal server error",
+             "type": type(exc).__name__,
+             "path": str(request.url.path)},
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    @app.exception_handler(ValidationError)
+    async def _validation_handler(request: Request, exc: ValidationError):
+        return JSONResponse({"error": "validation failed",
+                             "detail": exc.errors()}, status_code=422)
+
     # ─── Static files ───────────────────────────────────────────────────
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -54,6 +262,28 @@ def create_app(shared: dict) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def index():
         return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+    # ─── Liveness probe ────────────────────────────────────────────────
+    @app.get("/healthz")
+    async def api_healthz():
+        """Cheap liveness probe for NSSM/supervisors. No auth required.
+
+        Returns 200 if the dashboard process is up and the shared state
+        looks wired. Does NOT check PLC connectivity — that's
+        /api/diagnostics (a deeper check that does).
+        """
+        modbus = shared.get("modbus")
+        return {
+            "status": "ok",
+            "uptime_s": round(time.time() - SERVER_START_TS, 1),
+            "modbus_healthy": modbus.is_healthy if modbus else None,
+            "auth_enabled": _configured_token(shared) is not None,
+        }
+
+    # ─── Auth status (public) — so the login form knows if auth is on ──
+    @app.get("/api/auth/status")
+    async def api_auth_status():
+        return {"auth_enabled": _configured_token(shared) is not None}
 
     # ─── Snapshot REST endpoint (for initial load / polling fallback) ───
     @app.get("/api/status")
@@ -74,12 +304,18 @@ def create_app(shared: dict) -> FastAPI:
         return rows[-200:]  # last 200 entries
 
     # ─── Operator controls ─────────────────────────────────────────────
+    # Every state-changing endpoint writes to audit.log so there's a durable
+    # record of what the operator asked for — SafetyGate already audits
+    # accepted/rejected PLC writes, but without these we had no trail of
+    # *who asked* for a phase promotion or bounds override.
     @app.post("/api/control/disable")
     async def control_disable():
         gate = shared.get("gate")
         if not gate:
             raise HTTPException(503, "Gate not initialized")
         gate.operator_disable()
+        _audit_operator(shared, "DISABLE",
+                         f"state_after={gate.state.name}")
         logger.info("DASHBOARD: operator DISABLED adaptive")
         return {"status": "disabled", "state": gate.state.name}
 
@@ -89,33 +325,38 @@ def create_app(shared: dict) -> FastAPI:
         if not gate:
             raise HTTPException(503, "Gate not initialized")
         gate.operator_enable()
+        _audit_operator(shared, "ENABLE",
+                         f"state_after={gate.state.name}")
         logger.info("DASHBOARD: operator ENABLED adaptive")
         return {"status": "enabled", "state": gate.state.name}
 
     @app.post("/api/control/phase")
-    async def control_phase(body: dict):
+    async def control_phase(body: PhaseBody):
         config = shared.get("config")
         if not config:
             raise HTTPException(503, "Config not loaded")
-        new_phase = body.get("phase", "").upper()
+        new_phase = body.phase.upper()
         from hxi_optimizer.hxi_config import Phase
         try:
+            old = config.phase.value
             config.phase = Phase(new_phase)
         except ValueError:
             raise HTTPException(400, f"Invalid phase: {new_phase}")
-        logger.info(f"DASHBOARD: phase changed to {new_phase}")
+        _audit_operator(shared, "PHASE_CHANGE",
+                         f"{old} -> {config.phase.value}")
+        logger.info(f"DASHBOARD: phase changed {old} -> {new_phase}")
         return {"phase": config.phase.value}
 
     @app.post("/api/control/depth")
-    async def control_depth(body: dict):
+    async def control_depth(body: DepthBody):
         config = shared.get("config")
         if not config:
             raise HTTPException(503, "Config not loaded")
-        depth = body.get("depth_ft")
-        if depth is None or not isinstance(depth, (int, float)) or depth <= 0:
-            raise HTTPException(400, "depth_ft must be a positive number")
-        config.drill_depth_ft = float(depth)
-        logger.info(f"DASHBOARD: drill depth updated to {depth} ft")
+        old = config.drill_depth_ft
+        config.drill_depth_ft = float(body.depth_ft)
+        _audit_operator(shared, "DEPTH_UPDATE",
+                         f"{old:.0f}ft -> {config.drill_depth_ft:.0f}ft")
+        logger.info(f"DASHBOARD: drill depth updated to {body.depth_ft} ft")
         return {"drill_depth_ft": config.drill_depth_ft}
 
     # ─── Register catalog from Excel ──────────────────────────────────
@@ -184,83 +425,451 @@ def create_app(shared: dict) -> FastAPI:
                 })
         return {"ts": time.time(), "register_count": len(results), "values": results}
 
+    # ─── eCatcher tunnel status ────────────────────────────────────────
+    @app.get("/api/ecatcher")
+    async def api_ecatcher():
+        """Current eCatcher / Talk2m tunnel detection state."""
+        state = shared.get("ecatcher_state")
+        monitor = shared.get("ecatcher_monitor")
+        info = {
+            "state": state,
+            "log_path": str(monitor.log_path) if monitor and monitor.log_path else None,
+            "talk2m_configured": bool(monitor and monitor.t2m_account) if monitor else False,
+        }
+        return info
+
+    @app.post("/api/ecatcher/probe")
+    async def api_ecatcher_probe():
+        """Force an immediate eCatcher poll (don't wait for the 30 s cycle)."""
+        monitor = shared.get("ecatcher_monitor")
+        if not monitor:
+            raise HTTPException(503, "eCatcher monitor not initialized")
+        state = await monitor.detect()
+        shared["ecatcher_state"] = state.to_json()
+        return state.to_json()
+
+    # ─── Real-time dataset capture (for model fine-tuning) ─────────────
+    @app.get("/api/dataset/summary")
+    async def api_dataset_summary():
+        cap = shared.get("dataset_capture")
+        if not cap:
+            return {"enabled": False, "reason": "Dataset capture disabled in config"}
+        return {"enabled": True, **cap.summary()}
+
+    @app.post("/api/dataset/annotate")
+    async def api_dataset_annotate(body: AnnotateBody):
+        """Capture the last N seconds of telemetry with an operator-supplied label."""
+        cap = shared.get("dataset_capture")
+        if not cap:
+            raise HTTPException(503, "Dataset capture disabled")
+        meta = cap.capture_now(label=body.label, notes=body.notes,
+                                 lookback_s=body.lookback_s)
+        if not meta:
+            raise HTTPException(400, "Not enough telemetry in buffer yet")
+        _audit_operator(shared, "ANNOTATE",
+                         f"label={body.label} n={meta.n_samples}")
+        logger.info(f"DASHBOARD: operator annotation '{body.label}' "
+                     f"({meta.n_samples} samples)")
+        return meta.to_json()
+
+    # ─── Current machine + history ─────────────────────────────────────
+    @app.get("/api/machine/current")
+    async def api_machine_current():
+        """Full record of the machine the optimizer is currently connected to."""
+        rec = shared.get("machine_record")
+        if not rec:
+            return {"identified": False, "reason": "No fleet match for current host"}
+        return {"identified": True, **rec.to_json()}
+
+    @app.get("/api/machine/history")
+    async def api_machine_history():
+        """Every machine this optimizer instance has ever connected to."""
+        store = shared.get("machine_store")
+        if not store:
+            raise HTTPException(503, "Machine state store not initialized")
+        return {
+            "current_ewon_name": store.current_ewon_name,
+            "current_plc_ip": store.current_plc_ip,
+            "machine_count": store.machine_count(),
+            "session_start": store.session_start,
+            "history": [h.to_json() for h in store.history.values()],
+            "recent_events": [e.to_json() for e in store.recent_events(50)],
+        }
+
+    @app.post("/api/machine/switch")
+    async def api_machine_switch(body: MachineSwitchBody):
+        """Manually force the optimizer to treat the PLC as a specific machine.
+        Useful when auto-detect can't identify the rig. Does NOT restart comms."""
+        registry = shared.get("machine_registry")
+        store = shared.get("machine_store")
+        config = shared.get("config")
+        if not registry or not store:
+            raise HTTPException(503, "Registry not initialized")
+        match = registry.get_for_rig(body.ewon_name)
+        if not match:
+            raise HTTPException(
+                404, f"No machine named {body.ewon_name!r} in fleet catalog")
+        old = store.current_ewon_name
+        if config:
+            match.plc_ip = config.plc_host
+        store.note_connection(match, reason="manual")
+        shared["machine_record"] = match
+        store.save()
+        _audit_operator(shared, "MACHINE_SWITCH",
+                         f"{old or '<none>'} -> {match.ewon_name}")
+        logger.info(f"DASHBOARD: operator switched identity -> {match.ewon_name}")
+        return {"switched_to": match.ewon_name,
+                "equipment_type": match.equipment_type,
+                "register_count": len(match.register_map.registers)}
+
+    # ─── Intelligence layer (diagnosis + trends + digest + fleet triage) ─
+    @app.get("/api/intel/diagnose")
+    async def api_intel_diagnose():
+        """Run the rule+ML diagnosis engine on the current metrics."""
+        from hxi_optimizer.intelligence.diagnosis import (
+            DiagnosisEngine, diagnose_temperature,
+        )
+        metrics = shared.get("latest_metrics")
+        if metrics is None:
+            return {"ready": False, "reason": "no metrics yet"}
+        config = shared.get("config")
+        machine = shared.get("machine_record")
+        ring = shared.get("ring_buffer")
+        buffer_lock = shared.get("buffer_lock")
+        latest_live = {}
+        if ring and buffer_lock:
+            with buffer_lock:
+                if ring:
+                    latest_live = dict(ring[-1])
+        engine = DiagnosisEngine()
+        diags = engine.diagnose(
+            metrics=metrics,
+            machine=machine,
+            depth_ft=(config.drill_depth_ft if config else 3000.0),
+        )
+        # Temperature rule runs separately
+        temp = latest_live.get("loop_temp")
+        if temp is not None:
+            t_diag = diagnose_temperature(float(temp), engine)
+            if t_diag is not None:
+                diags.insert(0, t_diag)
+        return {
+            "ready": True,
+            "count": len(diags),
+            "diagnoses": [d.to_json() for d in diags],
+        }
+
+    @app.get("/api/intel/trends")
+    async def api_intel_trends(hours: float = 48.0):
+        """Multi-day trend analysis from CSV logs. CPU-heavy — runs in the
+        executor under the dashboard timeout so it can't starve read_loop.
+        """
+        from hxi_optimizer.intelligence.trend_analyzer import TrendAnalyzer
+
+        def _run():
+            analyzer = TrendAnalyzer(log_dir="hxi_optimizer/logs")
+            return analyzer.analyze(hours=hours)
+
+        findings = await _run_cpu_bound(shared, _run)
+        return {
+            "hours": hours,
+            "count": len(findings),
+            "findings": [f.to_json() for f in findings],
+        }
+
+    @app.get("/api/intel/digest")
+    async def api_intel_digest():
+        """Plain-language 'right now' summary for the dashboard banner."""
+        from hxi_optimizer.intelligence.diagnosis import (
+            DiagnosisEngine, diagnose_temperature,
+        )
+        from hxi_optimizer.intelligence.digest import summarize_now
+        from hxi_optimizer.intelligence.trend_analyzer import TrendAnalyzer
+
+        metrics = shared.get("latest_metrics")
+        if metrics is None:
+            return {"ready": False}
+        snapshot = _build_snapshot(shared)
+        config = shared.get("config")
+        engine = DiagnosisEngine()
+        diags = engine.diagnose(
+            metrics=metrics,
+            depth_ft=(config.drill_depth_ft if config else 3000.0),
+        )
+        # Temperature
+        temp = snapshot.get("live", {}).get("loop_temp")
+        if temp is not None:
+            t_diag = diagnose_temperature(float(temp), engine)
+            if t_diag is not None:
+                diags.insert(0, t_diag)
+        trends = TrendAnalyzer(log_dir="hxi_optimizer/logs").analyze()
+        digest = summarize_now(snapshot, diags, trends)
+        return {"ready": True, **digest.to_json()}
+
+    @app.get("/api/intel/triage")
+    async def api_intel_triage():
+        """Fleet-wide attention ranking."""
+        from hxi_optimizer.intelligence.fleet_triage import FleetTriage
+        store = shared.get("machine_store")
+        registry = shared.get("machine_registry")
+        if store is None:
+            return {"ready": False, "reason": "no machine store"}
+        fleet = registry.fleet if registry else None
+        triage = FleetTriage(store, fleet)
+        ranked = triage.rank()
+        return {
+            "ready": True,
+            "summary": triage.summary(),
+            "rigs": [r.to_json() for r in ranked[:50]],
+        }
+
+    # ─── A/B model comparison ─────────────────────────────────────────
+    @app.get("/api/intel/compare-models")
+    async def api_intel_compare_models(rig: str | None = None,
+                                        n_max: int = 500):
+        """Run the default sim classifier and the per-rig fine-tune against
+        the same captured real episodes; report per-model accuracy + a
+        promote/rollback recommendation.
+
+        Query params:
+          rig   — rig name (defaults to the currently-connected machine)
+          n_max — cap on the number of windows to score (default 500)
+
+        Returns ok=False if no labeled real data exists yet for the rig.
+        """
+        from training.fine_tune import load_real_episodes, CLASSES
+        from hxi_optimizer.intelligence.compare_models import compare_pairs
+        from hxi_optimizer.intelligence.model_registry import ModelRegistry
+
+        # Resolve rig: explicit param > current connected machine
+        if not rig:
+            record = shared.get("machine_record")
+            if record is not None:
+                rig = record.ewon_name
+        if not rig:
+            return {"ok": False,
+                    "reason": "No rig specified and no machine connected"}
+
+        registry = shared.get("model_registry") or ModelRegistry()
+
+        # Load captured real episodes for this rig
+        try:
+            X, y, _machines, stats = load_real_episodes(rig)
+        except Exception as e:
+            raise HTTPException(500, f"Dataset load failed: {e}")
+
+        if len(X) == 0:
+            return {
+                "ok": False,
+                "rig_name": rig,
+                "reason": ("No labeled real episodes for this rig yet. "
+                            "Capture some with the dashboard 'Annotate' "
+                            "buttons, then retry."),
+                "n_episodes": int(stats.n_episodes),
+                "has_per_rig": registry.has_per_rig(rig),
+            }
+
+        # Cap window count so the endpoint stays responsive
+        if len(X) > n_max:
+            import numpy as _np
+            # Deterministic subsample (seed=7) so repeated calls are stable
+            rng = _np.random.default_rng(7)
+            idx = rng.choice(len(X), size=n_max, replace=False)
+            X = X[idx]
+            y = y[idx]
+
+        # ONNX inference for both models runs in the executor with a
+        # timeout — two full model sweeps over up to n_max windows would
+        # otherwise block the 2 Hz read_loop.
+        comparison = await _run_cpu_bound(
+            shared, compare_pairs, registry, rig, CLASSES, X, y,
+        )
+        comparison["ok"] = True
+        comparison["n_episodes"] = int(stats.n_episodes)
+        comparison["label_distribution"] = stats.by_label
+        return comparison
+
+    # ─── Fleet catalog ─────────────────────────────────────────────────
+    @app.get("/api/fleet")
+    async def api_fleet():
+        """Full fleet catalog (all eWon devices Steve operates)."""
+        try:
+            from hxi_optimizer.comms.fleet import FleetCatalog, EQUIPMENT_CATALOG
+        except ImportError:
+            raise HTTPException(500, "Fleet module unavailable")
+        catalog = FleetCatalog.load()
+        model_registry = shared.get("model_registry")
+        if model_registry is None:
+            try:
+                from hxi_optimizer.intelligence.model_registry import ModelRegistry
+                model_registry = ModelRegistry()
+            except Exception:
+                model_registry = None
+        devices = []
+        for d in catalog.devices:
+            spec = EQUIPMENT_CATALOG.get(d.equipment_type, EQUIPMENT_CATALOG["unknown"])
+            has_ft = (model_registry.has_per_rig(d.ewon_name)
+                      if model_registry else False)
+            devices.append({
+                "ewon_name": d.ewon_name,
+                "equipment_type": d.equipment_type,
+                "customer": d.customer,
+                "description": d.description,
+                "firmware": d.firmware,
+                "status": d.status,
+                "has_profile": d.profile_path is not None,
+                "profile_file": d.profile_path.name if d.profile_path else None,
+                "has_per_rig_model": has_ft,
+                "spec": {
+                    "display_name": spec.display_name,
+                    "horsepower": spec.horsepower,
+                    "gear_ratio": spec.gear_ratio,
+                    "max_torque_ft_lbs": spec.max_torque_ft_lbs,
+                    "max_rpm": spec.max_rpm,
+                    "plc_type": spec.plc_type,
+                    "register_convention": spec.register_convention,
+                },
+            })
+        # Current connected machine (try to identify from config)
+        config = shared.get("config")
+        current = None
+        if config:
+            ewon = getattr(config, "ewon_name", None)
+            ident = catalog.identify_by_name(ewon) if ewon else None
+            if not ident and config.plc_host:
+                ident = catalog.identify_by_ip(config.plc_host)
+            if ident:
+                current = {
+                    "ewon_name": ident.ewon_name,
+                    "equipment_type": ident.equipment_type,
+                    "display_name": ident.spec.display_name,
+                    "customer": ident.customer,
+                    "source": ident.source,
+                    "confidence": ident.confidence,
+                }
+        return {
+            "total": len(devices),
+            "summary": catalog.summary(),
+            "current_machine": current,
+            "devices": devices,
+        }
+
+    # ─── Per-rig model registry ────────────────────────────────────────
+    @app.get("/api/models")
+    async def api_models():
+        """List fine-tuned per-rig models alongside the default sim pair.
+
+        The optimizer auto-selects a per-rig model when the connected rig
+        has one. Returns provenance for every pair + which one is live.
+        """
+        registry = shared.get("model_registry")
+        if registry is None:
+            try:
+                from hxi_optimizer.intelligence.model_registry import ModelRegistry
+                registry = ModelRegistry()
+            except Exception as e:
+                raise HTTPException(500, f"Model registry unavailable: {e}")
+        summary = registry.per_rig_summary()
+
+        # Enrich with meta.json contents (accuracy, recalibration, etc.)
+        for entry in summary.get("per_rig", []):
+            pair = next((p for p in registry.list_all()
+                         if p.rig_slug == entry["rig_slug"]
+                         and p.source == "per_rig"), None)
+            if pair:
+                entry["meta"] = registry.meta_for(pair)
+
+        # Live info: which pair the running PerformanceMonitor is using
+        monitor = shared.get("monitor")
+        live = None
+        if monitor is not None and hasattr(monitor, "loaded_models_info"):
+            try:
+                live = monitor.loaded_models_info()
+            except Exception as e:
+                live = {"error": str(e)}
+        summary["live"] = live
+
+        # Current rig for convenience
+        record = shared.get("machine_record")
+        if record is not None:
+            summary["current_rig"] = {
+                "ewon_name": record.ewon_name,
+                "equipment_type": record.equipment_type,
+                "has_per_rig_model": registry.has_per_rig(record.ewon_name),
+            }
+        return summary
+
     # ─── Simulation sandbox ────────────────────────────────────────────
     @app.post("/api/simulate")
-    async def api_simulate(body: dict):
+    async def api_simulate(body: SimulateBody):
         """Run a simulation scenario and return the time series + metrics.
 
-        body: {
-            "scenario": "normal|bias|oscillation|stickslip|...",
-            "duration_s": 300,
-            "setpoint": 60.0,
-            "params": { ...scenario-specific overrides... }
-        }
+        Heavy work runs in the executor with a bounded timeout so a long
+        scenario can't starve the 2 Hz PLC read_loop.
         """
         from training.scenarios import ALL_GENERATORS
-        from training.generate_dataset import samples_to_arrays, FEATURE_COLS
-        scenario = body.get("scenario", "normal")
-        duration = min(body.get("duration_s", 300), 600)
-        setpoint = body.get("setpoint", 60.0)
-        params = body.get("params", {})
 
-        gen = ALL_GENERATORS.get(scenario)
+        gen = ALL_GENERATORS.get(body.scenario)
         if not gen:
-            raise HTTPException(400, f"Unknown scenario: {scenario}. "
+            raise HTTPException(400, f"Unknown scenario: {body.scenario}. "
                                 f"Available: {list(ALL_GENERATORS.keys())}")
 
         import inspect
         sig = inspect.signature(gen)
-        kwargs = {"duration_s": duration, "setpoint": setpoint, "seed": 42}
-        for k, v in params.items():
+        duration = min(body.duration_s, 600.0)
+        kwargs = {"duration_s": duration, "setpoint": body.setpoint, "seed": 42}
+        if body.equipment_type and "equipment_type" in sig.parameters:
+            kwargs["equipment_type"] = body.equipment_type
+        for k, v in body.params.items():
             if k in sig.parameters:
                 kwargs[k] = v
 
-        samples, labels = gen(**kwargs)
+        def _run_sim_and_metrics():
+            samples, labels = gen(**kwargs)
+            from hxi_optimizer.monitoring.performance_metrics import PerformanceMonitor
+            mon = PerformanceMonitor(window_sec=20.0, deadband_rpm=2.0)
+            metrics_snapshots = []
+            for i, s in enumerate(samples):
+                mon.update(s["rpm_encoder"], s["ss_setpoint_fwd"],
+                           s["swash_output"], s["active_lower"], s["active_upper"])
+                if i > 0 and i % 20 == 0:
+                    m = mon.compute_metrics(s["ss_setpoint_fwd"],
+                                             s["active_lower"], s["active_upper"])
+                    metrics_snapshots.append({
+                        "t": s["ts"],
+                        "dniae": round(m.dniae, 4),
+                        "mode": m.failure_mode,
+                        "confidence": round(m.failure_confidence, 2),
+                        "sat_total": round(m.sat_total, 3),
+                        "rmse": round(m.rmse_rpm, 2),
+                        "mean_error": round(m.mean_error, 2),
+                        "is_windup": m.is_windup,
+                        "change_detected": m.change_detected,
+                    })
+            return samples, labels, metrics_snapshots
 
-        ts = [s["ts"] for s in samples]
-        rpm = [s["rpm_encoder"] for s in samples]
-        swash = [s["swash_output"] for s in samples]
-        setpoints = [s["ss_setpoint_fwd"] for s in samples]
-        torque = [s["delivered_torque"] for s in samples]
-        temp = [s["loop_temp"] for s in samples]
-        lower = [s["active_lower"] for s in samples]
-        upper = [s["active_upper"] for s in samples]
-
-        # Compute performance metrics on the simulation
-        from hxi_optimizer.monitoring.performance_metrics import PerformanceMonitor
-        mon = PerformanceMonitor(window_sec=20.0, deadband_rpm=2.0)
-        metrics_snapshots = []
-        for i, s in enumerate(samples):
-            mon.update(s["rpm_encoder"], s["ss_setpoint_fwd"],
-                       s["swash_output"], s["active_lower"], s["active_upper"])
-            if i > 0 and i % 20 == 0:
-                m = mon.compute_metrics(s["ss_setpoint_fwd"],
-                                        s["active_lower"], s["active_upper"])
-                metrics_snapshots.append({
-                    "t": s["ts"],
-                    "dniae": round(m.dniae, 4),
-                    "mode": m.failure_mode,
-                    "confidence": round(m.failure_confidence, 2),
-                    "sat_total": round(m.sat_total, 3),
-                    "rmse": round(m.rmse_rpm, 2),
-                    "mean_error": round(m.mean_error, 2),
-                    "is_windup": m.is_windup,
-                    "change_detected": m.change_detected,
-                })
+        samples, labels, metrics_snapshots = await _run_cpu_bound(
+            shared, _run_sim_and_metrics)
 
         label_counts = {}
         for l in labels:
             label_counts[l] = label_counts.get(l, 0) + 1
 
         return {
-            "scenario": scenario,
+            "scenario": body.scenario,
             "duration_s": duration,
             "sample_count": len(samples),
             "label_distribution": label_counts,
             "timeseries": {
-                "ts": ts, "rpm": rpm, "setpoint": setpoints,
-                "swash": swash, "torque": torque, "temp": temp,
-                "lower": lower, "upper": upper, "labels": labels,
+                "ts": [s["ts"] for s in samples],
+                "rpm": [s["rpm_encoder"] for s in samples],
+                "setpoint": [s["ss_setpoint_fwd"] for s in samples],
+                "swash": [s["swash_output"] for s in samples],
+                "torque": [s["delivered_torque"] for s in samples],
+                "temp": [s["loop_temp"] for s in samples],
+                "lower": [s["active_lower"] for s in samples],
+                "upper": [s["active_upper"] for s in samples],
+                "labels": labels,
             },
             "metrics": metrics_snapshots,
         }
@@ -517,16 +1126,32 @@ def create_app(shared: dict) -> FastAPI:
                                  headers={"Content-Disposition": "attachment; filename=history.csv"})
 
     # ─── WebSocket — 2 Hz live telemetry push ──────────────────────────
+    # Active connections are tracked in `shared["ws_clients"]` so the
+    # graceful-shutdown hook can send close frames before killing the
+    # asyncio loop. BaseHTTPMiddleware doesn't run for WebSocket, so auth
+    # is checked inline here against ?token=... query param.
+    shared.setdefault("ws_clients", set())
+
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
+        token = _configured_token(shared)
+        if token is not None:
+            supplied = ws.query_params.get("token", "")
+            if not supplied or not hmac.compare_digest(supplied, token):
+                await ws.close(code=4401)     # 4401: unauthorized
+                return
         await ws.accept()
-        logger.info("Dashboard WebSocket client connected")
+        shared["ws_clients"].add(ws)
+        logger.info("Dashboard WebSocket client connected "
+                    f"(total={len(shared['ws_clients'])})")
+        shutdown_event: asyncio.Event | None = shared.get("shutdown_event")
         try:
             last_alarm_ts = 0.0
             while True:
+                if shutdown_event is not None and shutdown_event.is_set():
+                    await ws.close(code=1001)  # 1001: going away
+                    return
                 snapshot = _build_snapshot(shared)
-                # History is pushed by the background task, not here
-                # Include any new alarms
                 alarms = shared.get("alarms", [])
                 new_alarms = [a for a in alarms if a["ts"] > last_alarm_ts]
                 if new_alarms:
@@ -538,6 +1163,8 @@ def create_app(shared: dict) -> FastAPI:
             logger.info("Dashboard WebSocket client disconnected")
         except Exception as e:
             logger.warning(f"Dashboard WebSocket error: {e}")
+        finally:
+            shared["ws_clients"].discard(ws)
 
     return app
 
@@ -665,19 +1292,61 @@ def _build_snapshot(shared: dict) -> dict:
             "change_reason": metrics.change_reason,
             "n_valid": metrics.n_valid,
             "stale_fraction": round(metrics.stale_fraction, 3),
+            "anomaly_score": round(metrics.anomaly_score, 6),
+            "anomaly_threshold": round(metrics.anomaly_threshold, 6),
+            "anomaly_detected": metrics.anomaly_detected,
         }
 
     return snap
 
 
-async def start_dashboard(app: FastAPI, host: str = "0.0.0.0", port: int = 8420):
-    """Start uvicorn inside the running asyncio loop (non-blocking)."""
+async def start_dashboard(app: FastAPI, host: str = "0.0.0.0", port: int = 8420,
+                           shared: dict | None = None):
+    """Start uvicorn inside the running asyncio loop.
+
+    Enforces a concurrency cap and a body-size limit pulled from Config so
+    a runaway client can't drown out the PLC read_loop. The uvicorn Server
+    object is stashed in `shared['dashboard_server']` so main.py's
+    shutdown path can flip `server.should_exit = True` and let the ASGI
+    app drain in-flight requests + WebSocket close frames before we kill
+    the event loop.
+    """
     import uvicorn
+    cfg = shared.get("config") if shared else None
+    limit_concurrency = getattr(cfg, "dashboard_max_concurrent", 64) if cfg else 64
+    max_body_bytes = getattr(cfg, "dashboard_max_body_bytes", 1_000_000) if cfg else 1_000_000
     config = uvicorn.Config(
         app, host=host, port=port,
         log_level="warning",
         access_log=False,
+        limit_concurrency=limit_concurrency,
+        limit_max_requests=None,
+        h11_max_incomplete_event_size=max_body_bytes,
+        timeout_graceful_shutdown=5,
     )
     server = uvicorn.Server(config)
-    logger.info(f"Dashboard starting at http://{host}:{port}")
+    if shared is not None:
+        shared["dashboard_server"] = server
+
+    auth_msg = ("auth ENABLED"
+                if (shared and _configured_token(shared) is not None)
+                else "auth DISABLED (set dashboard_token or HXI_DASHBOARD_TOKEN)")
+    logger.info(f"Dashboard starting at http://{host}:{port} ({auth_msg})")
     await server.serve()
+
+
+async def shutdown_dashboard(shared: dict) -> None:
+    """Gracefully close WebSocket clients and tell uvicorn to stop.
+
+    Called from main.py's shutdown path before the csv_logger join so the
+    audit trail captures any in-flight operator actions. Idempotent.
+    """
+    clients = list(shared.get("ws_clients", []))
+    for ws in clients:
+        try:
+            await ws.close(code=1001)  # 1001 = going away
+        except Exception:
+            pass
+    server = shared.get("dashboard_server")
+    if server is not None:
+        server.should_exit = True

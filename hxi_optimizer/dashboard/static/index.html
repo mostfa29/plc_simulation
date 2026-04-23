@@ -246,10 +246,12 @@ canvas { width: 100%; display: block; background: var(--bg); border-radius: 6px;
 <!-- ═══════════ TABS ═══════════ -->
 <div class="tabs" id="tabsBar">
   <button class="tab active" data-tab="overview">Overview</button>
+  <button class="tab" data-tab="intel">Intelligence</button>
   <button class="tab" data-tab="live">Live Charts</button>
   <button class="tab" data-tab="safety">Safety</button>
   <button class="tab" data-tab="performance">Performance</button>
   <button class="tab" data-tab="controls">Controls</button>
+  <button class="tab" data-tab="fleet">Fleet</button>
   <button class="tab" data-tab="registers">Registers</button>
   <button class="tab" data-tab="simulation">Simulation</button>
   <button class="tab" data-tab="training">Training</button>
@@ -346,6 +348,42 @@ canvas { width: 100%; display: block; background: var(--bg); border-radius: 6px;
       <span><span class="dot" style="background:var(--accent)"></span>RPM</span>
       <span><span class="dot" style="background:var(--dim)"></span>Setpoint</span>
       <span><span class="dot" style="background:rgba(34,197,94,0.3)"></span>Bounds</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ INTELLIGENCE ═══════════ -->
+<div class="panel" id="panel-intel">
+  <div class="card full-width">
+    <h2><span class="icon">&#129504;</span>Right Now
+      <div class="card-header-actions">
+        <button class="btn small" onclick="loadIntel()">Refresh</button>
+      </div>
+    </h2>
+    <div id="intelDigest" class="small muted">Loading...</div>
+  </div>
+
+  <div class="grid mt-16">
+    <div class="card">
+      <h2><span class="icon">&#128269;</span>Diagnosis <span id="intelDiagCount" class="muted small"></span></h2>
+      <div id="intelDiagnoses" class="mt-8">Loading...</div>
+    </div>
+    <div class="card">
+      <h2><span class="icon">&#128200;</span>Multi-day Trends <span id="intelTrendCount" class="muted small"></span></h2>
+      <div id="intelTrends" class="mt-8">Loading...</div>
+    </div>
+  </div>
+
+  <div class="card full-width mt-16">
+    <h2><span class="icon">&#9881;</span>Fleet Triage — Attention Ranking
+      <div class="card-header-actions"><button class="btn small" onclick="loadIntel()">Refresh</button></div>
+    </h2>
+    <div id="intelTriageSummary" class="small muted">Loading...</div>
+    <div class="scroll-box mt-8" style="max-height:400px">
+      <table>
+        <thead><tr><th>Score</th><th>Rig</th><th>Customer</th><th>Type</th><th>Last seen</th><th>State</th><th>Why</th></tr></thead>
+        <tbody id="intelTriageBody"></tbody>
+      </table>
     </div>
   </div>
 </div>
@@ -459,6 +497,18 @@ canvas { width: 100%; display: block; background: var(--bg); border-radius: 6px;
       <div class="row between mt-8"><span class="small">Variance alarms</span><span id="cusumVar" class="small" style="font-family:var(--mono)">0</span></div>
       <div class="row between mt-8"><span class="small">Oscillation alarms</span><span id="cusumOsc" class="small" style="font-family:var(--mono)">0</span></div>
     </div>
+
+    <div class="card">
+      <h2><span class="icon">&#129504;</span>ML Anomaly Detector</h2>
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">Score</div><div class="kpi-value sm" id="aeScore">--</div></div>
+        <div class="kpi"><div class="kpi-label">Threshold</div><div class="kpi-value xs" id="aeThresh">--</div></div>
+        <div class="kpi"><div class="kpi-label">Status</div><div class="kpi-value sm" id="aeStatus">--</div></div>
+      </div>
+      <div class="kpi-label mt-12">Score vs threshold (higher = more anomalous)</div>
+      <div class="bar-gauge mt-8"><div class="bar-fill" id="aeBar"></div></div>
+      <div class="small muted mt-8">Reconstruction error from a 16-dim Conv-AE trained on NORMAL windows only. Supplements the 3-channel CUSUM with a full 7-channel multivariate signature.</div>
+    </div>
     <div class="card full-width">
       <h2>DNIAE & Saturation History</h2>
       <canvas id="chartPerfHistory" height="150"></canvas>
@@ -511,6 +561,121 @@ canvas { width: 100%; display: block; background: var(--bg); border-radius: 6px;
       </div>
       <div class="small muted mt-8">Total active alarms: <b id="alarmsTotal">0</b></div>
     </div>
+
+    <div class="card full-width">
+      <h2><span class="icon">&#128221;</span>Annotate for Fine-Tuning Dataset</h2>
+      <p class="small muted">Tag the last 20 s of telemetry as a labelled training episode. Used later to fine-tune the ML classifier on real-world drilling data.</p>
+      <div class="btn-row mt-12">
+        <button class="btn" onclick="annotateQuick('OSCILLATION')">Oscillation now</button>
+        <button class="btn" onclick="annotateQuick('STICKSLIP')">Stick-slip</button>
+        <button class="btn" onclick="annotateQuick('BIAS')">Bias / offset</button>
+        <button class="btn" onclick="annotateQuick('FORMATION_CHANGE')">Formation change</button>
+        <button class="btn" onclick="annotateQuick('CONDITION_CHANGE')">Condition change</button>
+        <button class="btn" onclick="annotateQuick('BAD_CONNECTION')">Bad connection</button>
+        <button class="btn" onclick="annotateQuick('GOOD_CONNECTION')">Good connection</button>
+        <button class="btn" onclick="annotateQuick('WINDUP')">Windup</button>
+      </div>
+      <div class="input-group mt-12">
+        <input type="text" id="annLabel" placeholder="custom label" style="width:150px">
+        <input type="text" id="annNotes" placeholder="notes (optional)" style="width:280px">
+        <button class="btn primary" onclick="annotateCustom()">Capture</button>
+      </div>
+      <div id="datasetSummary" class="small muted mt-12">Loading dataset summary...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ FLEET ═══════════ -->
+<div class="panel" id="panel-fleet">
+  <div class="grid">
+    <div class="card">
+      <h2><span class="icon">&#128200;</span>Connected Machine
+        <div class="card-header-actions"><button class="btn small" onclick="loadMachine()">Refresh</button></div>
+      </h2>
+      <div id="machineCurrent" class="mt-8 small">Loading...</div>
+    </div>
+    <div class="card">
+      <h2>Fleet Summary</h2>
+      <div id="fleetSummary" class="mt-8 small">Loading...</div>
+    </div>
+    <div class="card">
+      <h2>Manual Override</h2>
+      <p class="small muted">If auto-detect can't identify the rig, pick it from the fleet here.</p>
+      <div class="input-group mt-12" style="flex-wrap:wrap">
+        <input type="text" id="fleetLookupName" placeholder="Precision Rig 707 3pd HT" style="width:220px">
+        <button class="btn primary" onclick="lookupEwon()">Look up</button>
+        <button class="btn success" onclick="switchMachine()">Use this machine</button>
+      </div>
+      <div id="fleetLookupResult" class="mt-12 small"></div>
+    </div>
+  </div>
+
+  <!-- eCatcher tunnel status -->
+  <div class="card full-width mt-16">
+    <h2><span class="icon">&#128273;</span>eCatcher / Talk2m Auto-Detect
+      <div class="card-header-actions">
+        <button class="btn small" onclick="probeEcatcher()">Probe now</button>
+      </div>
+    </h2>
+    <p class="small muted">The optimizer polls eCatcher every 30 seconds. When the tunnel opens to a different rig, the register map auto-switches. No config edits required.</p>
+    <div id="ecatcherStatus" class="mt-12 small">Loading...</div>
+  </div>
+
+  <!-- Current machine register map -->
+  <div class="card full-width mt-16">
+    <h2>Register Map for Current Machine</h2>
+    <div id="machineRegMap" class="small muted">Loading...</div>
+  </div>
+
+  <!-- Machine history + change events -->
+  <div class="grid mt-16">
+    <div class="card">
+      <h2>Machines Seen by this Optimizer</h2>
+      <div class="scroll-box" style="max-height:280px">
+        <table>
+          <thead><tr><th>eWon Name</th><th>Type</th><th>Customer</th><th>IP</th><th>Conn #</th><th>Last Seen</th></tr></thead>
+          <tbody id="machineHistoryBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Machine Change Events</h2>
+      <div class="scroll-box" style="max-height:280px">
+        <table>
+          <thead><tr><th>When</th><th>From</th><th>To</th><th>Reason</th></tr></thead>
+          <tbody id="machineEventsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card full-width mt-16">
+    <h2>A/B Compare: Sim vs Fine-Tuned Model
+      <div class="card-header-actions">
+        <input type="text" id="abCompareRig" placeholder="Rig name (blank = current)" style="width:240px" class="small">
+        <input type="number" id="abCompareN" value="500" min="50" max="5000" style="width:80px" class="small" title="Max windows">
+        <button class="btn small" onclick="runCompareModels()">Run Compare</button>
+      </div>
+    </h2>
+    <p class="small muted">Runs both classifiers against the captured labeled episodes for the rig. Recommendation is based on the accuracy delta: promote if +2pp or better, rollback if -2pp or worse.</p>
+    <div id="abCompareResult" class="mt-8 small muted">Click "Run Compare" to A/B test the current rig's fine-tuned model against the sim baseline.</div>
+  </div>
+
+  <div class="card full-width mt-16">
+    <h2>All Fleet Devices (<span id="fleetTotal">0</span>)
+      <div class="card-header-actions">
+        <select id="fleetTypeFilter" onchange="renderFleetTable()" class="small">
+          <option value="all">All equipment types</option>
+        </select>
+        <input type="text" id="fleetSearchFilter" oninput="renderFleetTable()" placeholder="Search..." style="width:160px" class="small">
+      </div>
+    </h2>
+    <div class="scroll-box mt-8" style="max-height:520px">
+      <table>
+        <thead><tr><th>eWon Name</th><th>Customer</th><th>Type</th><th>Display</th><th>HP</th><th>Gear</th><th>Max Tq</th><th>Max RPM</th><th>PLC</th><th>Status</th><th>Profile</th><th title="Fine-tuned classifier deployed for this rig">FT Model</th></tr></thead>
+        <tbody id="fleetBody"></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -557,6 +722,20 @@ canvas { width: 100%; display: block; background: var(--bg); border-radius: 6px;
           <option value="windup">Integral Windup</option>
           <option value="deadband_hunting">Deadband Hunting</option>
           <option value="connection">Pipe Connection</option>
+        </select>
+      </div>
+      <div><div class="kpi-label">Equipment</div>
+        <select id="simEquipment" style="min-width:180px">
+          <option value="">Generic (default)</option>
+          <option value="hxi">TESCO HXI 800HP</option>
+          <option value="hxi_ht">TESCO HXI HT 800HP (14:1)</option>
+          <option value="hxi_ss">TESCO HXI Smart Slide</option>
+          <option value="exi">TESCO EXI 800HP</option>
+          <option value="fds">TESCO FDS 800HP</option>
+          <option value="rostel">Rostel TDS11 750HP</option>
+          <option value="warrior">Warrior 600HP</option>
+          <option value="smart_drive">Smart Drive 900HP</option>
+          <option value="emi">EMI 400HP</option>
         </select>
       </div>
       <div><div class="kpi-label">Duration (s)</div><input type="number" id="simDuration" value="300" min="30" max="600" step="30" style="width:80px"></div>
@@ -722,6 +901,43 @@ let alarms = [];
 const SWASH_MIN = 0, SWASH_MAX = 1000;
 
 // ═════════════════════════════════════════════════════════════════
+// Auth token — persisted in localStorage. Checked against /api/auth/status
+// on load; if auth is enabled and no token is stored (or the stored one
+// is rejected) the user is prompted once and the value is cached.
+// ═════════════════════════════════════════════════════════════════
+const AUTH_KEY = 'hxi_dashboard_token';
+let authEnabled = false;
+function getToken() { return localStorage.getItem(AUTH_KEY) || ''; }
+function setToken(t) { localStorage.setItem(AUTH_KEY, t || ''); }
+function clearToken() { localStorage.removeItem(AUTH_KEY); }
+
+function promptForToken(reason) {
+  const existing = getToken();
+  const t = prompt(
+    (reason ? reason + '\n\n' : '') +
+    'Enter dashboard access token (set via dashboard_token in hxi_config.json ' +
+    'or the HXI_DASHBOARD_TOKEN env var):',
+    existing,
+  );
+  if (t !== null) setToken(t.trim());
+  return getToken();
+}
+
+async function ensureAuth() {
+  try {
+    const r = await fetch('/api/auth/status');
+    const d = await r.json();
+    authEnabled = !!d.auth_enabled;
+  } catch(e) { authEnabled = false; }
+  if (authEnabled && !getToken()) promptForToken('Authentication required.');
+}
+
+function authHeaders() {
+  const t = getToken();
+  return t ? {'Authorization': 'Bearer ' + t} : {};
+}
+
+// ═════════════════════════════════════════════════════════════════
 // Tab navigation
 // ═════════════════════════════════════════════════════════════════
 document.querySelectorAll('.tab').forEach(t => {
@@ -735,6 +951,9 @@ function switchTab(name) {
   if (name === 'registers' && allRegisters.length === 0) loadRegisters();
   if (name === 'audit' || name === 'safety') loadAudit();
   if (name === 'training') loadTraining();
+  if (name === 'fleet') { loadFleet(); refreshEcatcherStatus(); }
+  if (name === 'controls') refreshDatasetSummary();
+  if (name === 'intel') loadIntel();
   if (name === 'diagnostics') { loadDiagnostics(); loadConfig(); }
   if (name === 'logs') loadLogs();
 }
@@ -755,10 +974,21 @@ document.addEventListener('keydown', e => {
 // ═════════════════════════════════════════════════════════════════
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  // WebSocket browser API doesn't let us set custom headers, so we pass
+  // the token via query param. The server accepts both for WS.
+  const tok = getToken();
+  const qs = tok ? ('?token=' + encodeURIComponent(tok)) : '';
+  ws = new WebSocket(`${proto}://${location.host}/ws${qs}`);
   ws.onopen = () => toast('WebSocket connected', 'success');
-  ws.onclose = () => {
+  ws.onclose = (evt) => {
     document.getElementById('connDot').className = 'conn-dot err';
+    // 4401 = our custom unauthorized code from the server-side check
+    if (evt && evt.code === 4401) {
+      document.getElementById('connLabel').textContent = 'Unauthorized';
+      promptForToken('WebSocket rejected — re-enter token.');
+      setTimeout(connectWS, 500);
+      return;
+    }
     document.getElementById('connLabel').textContent = 'Reconnecting...';
     setTimeout(connectWS, 2000);
   };
@@ -841,6 +1071,31 @@ function applyUpdate(d) {
   setTxt('perfConf', ((m.failure_confidence || 0) * 100).toFixed(0) + '%');
   setTxt('perfValid', (m.n_valid || 0) + '/40');
 
+  // ML anomaly detector
+  const aeScore = m.anomaly_score || 0;
+  const aeThresh = m.anomaly_threshold || 0;
+  setTxt('aeScore', aeScore.toFixed(6));
+  setTxt('aeThresh', aeThresh.toFixed(6));
+  const aeStatusEl = document.getElementById('aeStatus');
+  if (aeStatusEl) {
+    if (m.anomaly_detected) {
+      aeStatusEl.textContent = 'ANOMALY';
+      aeStatusEl.style.color = 'var(--red)';
+    } else if (aeScore > aeThresh * 0.8 && aeThresh > 0) {
+      aeStatusEl.textContent = 'Elevated';
+      aeStatusEl.style.color = 'var(--yellow)';
+    } else {
+      aeStatusEl.textContent = 'Normal';
+      aeStatusEl.style.color = 'var(--green)';
+    }
+  }
+  const aeBar = document.getElementById('aeBar');
+  if (aeBar && aeThresh > 0) {
+    const pct = Math.min(100, (aeScore / (aeThresh * 2)) * 100);
+    aeBar.style.width = pct + '%';
+    aeBar.className = 'bar-fill ' + (pct > 50 ? 'red' : pct > 30 ? 'orange' : pct > 15 ? 'yellow' : 'green');
+  }
+
   // ── Safety ──
   const safety = d.safety || {};
   setTxt('kpiRej', safety.consecutive_rejections || 0);
@@ -908,7 +1163,10 @@ function setSatBar(barId, pctId, val) {
 // Charts (pure canvas, no dependencies)
 // ═════════════════════════════════════════════════════════════════
 async function fetchHistory() {
-  try { const r = await fetch('/api/history'); return await r.json(); }
+  try {
+    const r = await fetch('/api/history', {headers: authHeaders()});
+    return await r.json();
+  }
   catch(e) { return null; }
 }
 
@@ -1015,12 +1273,21 @@ setInterval(() => {
 // ═════════════════════════════════════════════════════════════════
 async function apiCall(method, url, body, successMsg) {
   try {
-    const opts = { method, headers: {'Content-Type':'application/json'} };
+    const opts = {
+      method,
+      headers: {'Content-Type':'application/json', ...authHeaders()},
+    };
     if (body) opts.body = JSON.stringify(body);
-    const r = await fetch(url, opts);
+    let r = await fetch(url, opts);
+    if (r.status === 401) {
+      // Stored token expired / wrong — prompt once and retry
+      promptForToken('Access denied. Re-enter token.');
+      opts.headers = {'Content-Type':'application/json', ...authHeaders()};
+      r = await fetch(url, opts);
+    }
     if (!r.ok) {
       const e = await r.json().catch(() => ({detail: r.statusText}));
-      toast('Error: ' + (e.detail || r.statusText), 'error');
+      toast('Error: ' + (e.detail || e.error || r.statusText), 'error');
       return null;
     }
     if (successMsg) toast(successMsg, 'success');
@@ -1103,6 +1370,7 @@ async function runSimulation() {
     scenario: document.getElementById('simScenario').value,
     duration_s: parseInt(document.getElementById('simDuration').value),
     setpoint: parseFloat(document.getElementById('simSetpoint').value),
+    equipment_type: document.getElementById('simEquipment').value || null,
   };
   const d = await apiCall('POST', '/api/simulate', body);
   btn.disabled = false; btn.textContent = 'Run Simulation';
@@ -1244,6 +1512,429 @@ setInterval(() => {
 }, 3000);
 
 // ═════════════════════════════════════════════════════════════════
+// Intelligence
+// ═════════════════════════════════════════════════════════════════
+
+const URGENCY_COLORS = {
+  critical: 'var(--red)', warn: 'var(--orange)',
+  watch: 'var(--yellow)', info: 'var(--dim)',
+};
+const STATE_COLORS = {
+  ATTEND: 'var(--red)', CAUTION: 'var(--orange)',
+  WATCH: 'var(--yellow)', NORMAL: 'var(--green)',
+};
+
+async function loadIntel() {
+  // Run all three endpoints in parallel
+  const hdrs = {headers: authHeaders()};
+  const [digest, diag, trends, triage] = await Promise.all([
+    fetch('/api/intel/digest', hdrs).then(r => r.json()).catch(() => null),
+    fetch('/api/intel/diagnose', hdrs).then(r => r.json()).catch(() => null),
+    fetch('/api/intel/trends', hdrs).then(r => r.json()).catch(() => null),
+    fetch('/api/intel/triage', hdrs).then(r => r.json()).catch(() => null),
+  ]);
+
+  // Digest
+  const dEl = document.getElementById('intelDigest');
+  if (!digest || !digest.ready) {
+    dEl.innerHTML = '<div class="muted">Waiting for metrics (need 20 samples)...</div>';
+  } else {
+    const stateColor = STATE_COLORS[digest.state] || 'var(--dim)';
+    dEl.innerHTML = `
+      <div style="font-size:16px;font-weight:600;margin-bottom:8px">
+        <span class="badge" style="background:${stateColor}22;color:${stateColor}">${digest.state}</span>
+        ${digest.headline}
+      </div>
+      <pre style="white-space:pre-wrap;font-family:var(--font);font-size:13px;margin:8px 0">${digest.body}</pre>
+      ${digest.actions.length > 0 ? `
+        <div style="margin-top:12px;padding:10px;background:var(--bg);border-left:3px solid var(--accent);border-radius:4px">
+          <div class="small muted" style="margin-bottom:4px">Recommended actions:</div>
+          ${digest.actions.map(a => '<div style="font-size:13px">• ' + a + '</div>').join('')}
+        </div>` : ''}`;
+  }
+
+  // Diagnoses
+  const dgEl = document.getElementById('intelDiagnoses');
+  document.getElementById('intelDiagCount').textContent = diag && diag.ready ? `(${diag.count})` : '';
+  if (!diag || !diag.ready) {
+    dgEl.innerHTML = '<div class="muted small">No diagnoses available yet.</div>';
+  } else if (diag.count === 0) {
+    dgEl.innerHTML = '<div class="muted small">No issues detected.</div>';
+  } else {
+    dgEl.innerHTML = diag.diagnoses.map(d => {
+      const color = URGENCY_COLORS[d.urgency] || 'var(--dim)';
+      return `
+        <div style="padding:10px 12px;border-left:3px solid ${color};background:var(--bg);border-radius:4px;margin-bottom:8px">
+          <div class="row between" style="align-items:baseline">
+            <span style="font-weight:600;font-size:13px">${d.finding}</span>
+            <span class="small" style="color:${color};text-transform:uppercase">${d.urgency}</span>
+          </div>
+          <div class="small muted" style="margin-top:4px">${d.likely_cause}</div>
+          <div class="small" style="margin-top:6px"><b>→</b> ${d.recommended_action}</div>
+          <div class="small muted" style="margin-top:4px;font-family:var(--mono);font-size:10px">
+            ${d.code} · ${(d.confidence * 100).toFixed(0)}% conf · ${d.evidence.join(' · ')}
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // Trends
+  const tEl = document.getElementById('intelTrends');
+  document.getElementById('intelTrendCount').textContent = trends ? `(${trends.count} in ${trends.hours} h)` : '';
+  if (!trends || trends.count === 0) {
+    tEl.innerHTML = '<div class="muted small">No trend findings. Need at least 50 samples per channel over the window.</div>';
+  } else {
+    tEl.innerHTML = trends.findings.map(f => {
+      const color = f.severity === 'warn' ? 'var(--orange)' :
+                     f.severity === 'watch' ? 'var(--yellow)' : 'var(--dim)';
+      return `
+        <div style="padding:8px 12px;border-left:3px solid ${color};background:var(--bg);border-radius:4px;margin-bottom:6px">
+          <div class="small">${f.finding}</div>
+          <div class="small muted" style="margin-top:4px">
+            ${f.channel}: ${f.baseline.toFixed(2)} → ${f.current.toFixed(2)}
+            (${f.slope_per_hour >= 0 ? '+' : ''}${f.slope_per_hour.toFixed(4)}/h,
+            ${f.samples} samples over ${f.window_hours.toFixed(1)} h)
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // Triage
+  const tsEl = document.getElementById('intelTriageSummary');
+  const tbEl = document.getElementById('intelTriageBody');
+  if (!triage || !triage.ready) {
+    tsEl.innerHTML = '<span class="muted">Triage unavailable.</span>';
+    tbEl.innerHTML = '';
+  } else {
+    const s = triage.summary;
+    tsEl.innerHTML = `Tracking <b>${s.total_rigs_known}</b> rigs — ` +
+                      `<b style="color:${s.need_attention > 0 ? 'var(--orange)' : 'var(--green)'}">${s.need_attention}</b> need attention ` +
+                      `(state: ${Object.entries(s.by_state).map(([k,v]) => k + '=' + v).join(', ')})`;
+    tbEl.innerHTML = triage.rigs.slice(0, 30).map(r => {
+      const stateColor = r.state === 'active' ? 'var(--green)' :
+                          r.state === 'idle' ? 'var(--cyan)' :
+                          r.state === 'stale' ? 'var(--yellow)' :
+                          'var(--dim)';
+      const age = r.last_seen_ago_h < 0 ? '—' :
+                  r.last_seen_ago_h < 1 ? `${(r.last_seen_ago_h * 60).toFixed(0)} min` :
+                  r.last_seen_ago_h < 48 ? `${r.last_seen_ago_h.toFixed(1)} h` :
+                  `${(r.last_seen_ago_h / 24).toFixed(1)} d`;
+      return `<tr>
+        <td style="font-family:var(--mono);color:${r.attention_score >= 15 ? 'var(--orange)' : 'var(--dim)'}">${r.attention_score.toFixed(1)}</td>
+        <td>${r.ewon_name}</td>
+        <td class="muted">${r.customer}</td>
+        <td>${r.equipment_type}</td>
+        <td>${age}</td>
+        <td style="color:${stateColor}">${r.state}</td>
+        <td class="small muted">${r.reasons.join('; ')}</td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Fleet
+// ═════════════════════════════════════════════════════════════════
+let _fleetDevices = [];
+
+async function loadFleet() {
+  const d = await apiCall('GET', '/api/fleet');
+  if (!d) return;
+  _fleetDevices = d.devices;
+  setTxt('fleetTotal', d.total);
+
+  // Summary
+  const sumEl = document.getElementById('fleetSummary');
+  sumEl.innerHTML = Object.entries(d.summary)
+    .map(([k, v]) => `<div class="row between mt-8"><span>${k}</span><span style="font-family:var(--mono)">${v}</span></div>`)
+    .join('');
+
+  // Type filter dropdown
+  const sel = document.getElementById('fleetTypeFilter');
+  sel.innerHTML = '<option value="all">All equipment types</option>';
+  Object.keys(d.summary).sort().forEach(t => {
+    const o = document.createElement('option'); o.value = t; o.textContent = `${t} (${d.summary[t]})`;
+    sel.appendChild(o);
+  });
+
+  renderFleetTable();
+  loadMachine();  // also load current machine details
+}
+
+async function loadMachine() {
+  const curEl = document.getElementById('machineCurrent');
+  const mr = document.getElementById('machineRegMap');
+  const cur = await apiCall('GET', '/api/machine/current');
+  const hist = await apiCall('GET', '/api/machine/history');
+
+  if (!cur || !cur.identified) {
+    curEl.innerHTML = '<div class="muted">Not identified. Auto-detect failed or the PLC host isn\'t in the fleet catalog. Use the Manual Override card to pick a machine.</div>';
+    mr.innerHTML = '<div class="muted">No machine identified.</div>';
+  } else {
+    const spec = cur.spec || {};
+    curEl.innerHTML = `
+      <div style="font-size:16px;font-weight:700">${cur.ewon_name}</div>
+      <div class="muted small mt-8">${cur.customer} &mdash; ${cur.description || ''}</div>
+      <div class="mt-8"><span class="badge phase-B">${cur.equipment_type}</span> ${spec.display_name || ''}</div>
+      <div class="row between small mt-12">
+        <span>HP:</span> <b>${spec.horsepower || '-'}</b>
+        <span>Gear:</span> <b>${spec.gear_ratio || '-'}:1</b>
+      </div>
+      <div class="row between small mt-8">
+        <span>Max Tq:</span> <b>${spec.max_torque_ft_lbs ? spec.max_torque_ft_lbs.toLocaleString() + ' ft-lbs' : '-'}</b>
+        <span>Max RPM:</span> <b>${spec.max_rpm || '-'}</b>
+      </div>
+      <div class="row between small mt-8">
+        <span>PLC:</span> <b>${spec.plc_type || '-'}</b>
+        <span>IP:</span> <b>${cur.plc_ip || '-'}:${cur.plc_port}</b>
+      </div>
+      <div class="row between small mt-8">
+        <span>Firmware:</span> <b>${cur.firmware || '-'}</b>
+        <span>Profile:</span> <b>${cur.profile_file || 'default'}</b>
+      </div>`;
+
+    // Render register map
+    const regs = cur.register_map || {};
+    const blocks = cur.read_blocks || [];
+    const rows = Object.entries(regs).map(([name, r]) =>
+      `<tr><td>${r.ge_address}</td><td>${name}</td><td>${r.data_type}</td><td>${r.unit || ''}</td><td>${r.description || ''}</td></tr>`
+    ).join('');
+    mr.innerHTML = `
+      <div class="row between small">
+        <span>${Object.keys(regs).length} registers mapped</span>
+        <span class="muted">${blocks.length} read block(s) &mdash; total ${blocks.reduce((a,b) => a + b.count, 0)} words</span>
+      </div>
+      <div class="scroll-box mt-8" style="max-height:260px">
+        <table>
+          <thead><tr><th>Address</th><th>Field</th><th>Type</th><th>Unit</th><th>Description</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  // Machine history
+  if (hist) {
+    const hb = document.getElementById('machineHistoryBody');
+    hb.innerHTML = (hist.history || []).slice().reverse().map(h => {
+      const last = new Date(h.last_seen * 1000).toLocaleString();
+      return `<tr><td>${h.ewon_name}</td><td>${h.equipment_type}</td><td>${h.customer}</td><td>${h.plc_ip || '-'}</td><td>${h.connection_count}</td><td>${last}</td></tr>`;
+    }).join('');
+
+    const eb = document.getElementById('machineEventsBody');
+    eb.innerHTML = (hist.recent_events || []).slice().reverse().map(e => {
+      const t = new Date(e.ts * 1000).toLocaleString();
+      const color = e.reason === 'ip_changed' ? 'var(--orange)' :
+                    e.reason === 'manual' ? 'var(--accent)' : 'var(--text)';
+      return `<tr><td>${t}</td><td>${e.from_machine || '-'}</td><td>${e.to_machine}</td><td style="color:${color}">${e.reason}</td></tr>`;
+    }).join('') || '<tr><td colspan="4" class="muted">No change events yet.</td></tr>';
+  }
+}
+
+async function switchMachine() {
+  const name = document.getElementById('fleetLookupName').value.trim();
+  if (!name) { toast('Enter an eWon name first', 'error'); return; }
+  if (!confirm(`Tell the optimizer the connected PLC is "${name}"?\n\nThis changes the register map and logs a manual-override event.`)) return;
+  const r = await apiCall('POST', '/api/machine/switch', {ewon_name: name}, `Switched to ${name}`);
+  if (r) loadMachine();
+}
+
+// ═════════════════════════════════════════════════════════════════
+// eCatcher auto-detect
+// ═════════════════════════════════════════════════════════════════
+async function probeEcatcher() {
+  const d = await apiCall('POST', '/api/ecatcher/probe', {}, 'eCatcher probed');
+  if (d) renderEcatcher(d);
+  loadMachine();  // machine may have auto-switched
+}
+
+async function refreshEcatcherStatus() {
+  const d = await apiCall('GET', '/api/ecatcher');
+  if (d) renderEcatcher(d.state, d.log_path, d.talk2m_configured);
+}
+
+function renderEcatcher(state, logPath, t2mConfigured) {
+  const el = document.getElementById('ecatcherStatus');
+  if (!el) return;
+  if (!state) {
+    el.innerHTML = '<div class="muted">eCatcher not polled yet. Click "Probe now".</div>';
+    return;
+  }
+  const upColor = state.tunnel_up ? 'var(--green)' : 'var(--dim)';
+  const upTxt = state.tunnel_up ? 'TUNNEL UP' : 'No tunnel';
+  el.innerHTML = `
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Tunnel</div>
+        <div class="kpi-value sm" style="color:${upColor}">${upTxt}</div></div>
+      <div class="kpi"><div class="kpi-label">Connected eWon</div>
+        <div class="kpi-value sm">${state.connected_ewon || '-'}</div></div>
+      <div class="kpi"><div class="kpi-label">VPN IP</div>
+        <div class="kpi-value xs" style="font-family:var(--mono)">${state.vpn_ip || '-'}</div></div>
+      <div class="kpi"><div class="kpi-label">Source</div>
+        <div class="kpi-value xs">${state.source}</div></div>
+    </div>
+    ${state.all_online && state.all_online.length > 1 ?
+      `<div class="small mt-12">Other online eWons: <span class="muted">${state.all_online.filter(n => n !== state.connected_ewon).join(', ')}</span></div>` : ''}
+    ${state.error ? `<div class="small mt-8" style="color:var(--yellow)">Error: ${state.error}</div>` : ''}
+    <div class="small muted mt-12">
+      Talk2m API: ${t2mConfigured ? 'configured' : 'not configured — falling back to log parsing'}<br>
+      Log path: ${logPath || '(not found automatically)'}
+    </div>`;
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Fine-tune dataset annotation
+// ═════════════════════════════════════════════════════════════════
+async function annotateQuick(label) {
+  const r = await apiCall('POST', '/api/dataset/annotate',
+    {label, lookback_s: 20}, `Captured: ${label}`);
+  if (r) refreshDatasetSummary();
+}
+
+async function annotateCustom() {
+  const label = document.getElementById('annLabel').value.trim().toUpperCase();
+  const notes = document.getElementById('annNotes').value.trim();
+  if (!label) { toast('Label required', 'error'); return; }
+  const r = await apiCall('POST', '/api/dataset/annotate',
+    {label, notes, lookback_s: 20}, `Captured: ${label}`);
+  if (r) {
+    document.getElementById('annLabel').value = '';
+    document.getElementById('annNotes').value = '';
+    refreshDatasetSummary();
+  }
+}
+
+async function refreshDatasetSummary() {
+  const d = await apiCall('GET', '/api/dataset/summary');
+  const el = document.getElementById('datasetSummary');
+  if (!el || !d) return;
+  if (!d.enabled) {
+    el.innerHTML = '<span class="muted">Dataset capture is disabled in config.</span>';
+    return;
+  }
+  const kb = ((d.total_size_bytes || 0) / 1024).toFixed(1);
+  const byLabel = Object.entries(d.by_label || {})
+    .map(([k,v]) => `${k}:${v}`).join(', ') || 'none';
+  const byMachine = Object.entries(d.by_machine || {})
+    .map(([k,v]) => `${k}:${v}`).join(', ') || 'none';
+  el.innerHTML = `
+    <div>Total episodes: <b>${d.total_episodes}</b> (${kb} KB on disk)</div>
+    <div class="mt-8">By label: <span class="muted">${byLabel}</span></div>
+    <div class="mt-8">By machine: <span class="muted">${byMachine}</span></div>`;
+}
+
+function renderFleetTable() {
+  const filter = document.getElementById('fleetTypeFilter').value;
+  const search = document.getElementById('fleetSearchFilter').value.toLowerCase();
+  const tbody = document.getElementById('fleetBody');
+  tbody.innerHTML = '';
+  _fleetDevices.forEach(d => {
+    if (filter !== 'all' && d.equipment_type !== filter) return;
+    if (search && !(d.ewon_name.toLowerCase().includes(search) ||
+                    d.customer.toLowerCase().includes(search) ||
+                    d.equipment_type.toLowerCase().includes(search))) return;
+    const tr = document.createElement('tr');
+    const statusDot = d.status === 'online' || d.status === 'connected' ? 'var(--green)' :
+                      d.status === 'offline' ? 'var(--red)' : 'var(--dim)';
+    const ftCell = d.has_per_rig_model
+      ? `<td style="color:var(--green)" title="Fine-tuned model deployed for this rig">&check;</td>`
+      : `<td class="muted" title="Using default sim-trained classifier">sim</td>`;
+    tr.innerHTML = `<td>${d.ewon_name}</td><td>${d.customer}</td><td>${d.equipment_type}</td><td>${d.spec.display_name}</td><td>${d.spec.horsepower || '-'}</td><td>${d.spec.gear_ratio || '-'}</td><td>${d.spec.max_torque_ft_lbs ? (d.spec.max_torque_ft_lbs/1000).toFixed(0)+'k' : '-'}</td><td>${d.spec.max_rpm || '-'}</td><td>${d.spec.plc_type}</td><td style="color:${statusDot}">${d.status}</td><td>${d.has_profile ? '&check;' : '-'}</td>${ftCell}`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function runCompareModels() {
+  const el = document.getElementById('abCompareResult');
+  const rig = document.getElementById('abCompareRig').value.trim();
+  const nMax = parseInt(document.getElementById('abCompareN').value) || 500;
+  el.innerHTML = '<span class="muted">Running A/B comparison&hellip; (loading episodes + running both models)</span>';
+  try {
+    const qs = new URLSearchParams();
+    if (rig) qs.set('rig', rig);
+    qs.set('n_max', String(nMax));
+    const d = await apiCall('GET', '/api/intel/compare-models?' + qs.toString());
+    if (!d.ok) {
+      el.innerHTML = `<div style="padding:10px;background:var(--bg);border-radius:6px;border-left:3px solid var(--amber)">
+        <b>Cannot compare:</b> ${d.reason || 'unknown'}
+        ${d.n_episodes !== undefined ? `<br><span class="muted">Episodes captured: ${d.n_episodes}</span>` : ''}
+      </div>`;
+      return;
+    }
+    const rec = d.recommendation || 'neutral';
+    const recColor = {promote:'var(--green)', rollback:'var(--red)',
+                      neutral:'var(--amber)', no_fine_tune_yet:'var(--dim)',
+                      insufficient_data:'var(--amber)', error:'var(--red)'}[rec] || 'var(--amber)';
+    const def = d.default || {};
+    const pr = d.per_rig;
+    const defAcc = (def.overall_accuracy * 100).toFixed(1);
+    const prAcc = pr ? (pr.overall_accuracy * 100).toFixed(1) : '—';
+    const improv = d.improvement_pp >= 0 ? '+' + d.improvement_pp.toFixed(1) : d.improvement_pp.toFixed(1);
+    const labelDist = Object.entries(d.label_distribution || {})
+      .map(([k,v]) => `${k}:${v}`).join(', ') || 'none';
+
+    const perClassRows = Object.keys(def.per_class_accuracy || {}).map(cls => {
+      const da = ((def.per_class_accuracy[cls] || 0) * 100).toFixed(1);
+      const pa = pr ? ((pr.per_class_accuracy?.[cls] || 0) * 100).toFixed(1) : '—';
+      const sup = def.per_class_support[cls] || 0;
+      return `<tr><td>${cls}</td><td style="text-align:right">${da}%</td><td style="text-align:right">${pa}${pr?'%':''}</td><td style="text-align:right" class="muted">${sup}</td></tr>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div style="padding:12px;background:var(--bg);border-radius:6px;border-left:3px solid ${recColor}">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <b>${d.rig_name}</b>
+            <span class="muted"> · ${d.n_windows} windows / ${d.n_episodes} episodes</span>
+          </div>
+          <div style="font-size:15px"><b style="color:${recColor}">${rec.toUpperCase().replace(/_/g,' ')}</b></div>
+        </div>
+        <div class="mt-8">${d.rationale || ''}</div>
+        <div class="mt-8" style="display:flex;gap:20px;flex-wrap:wrap">
+          <div><span class="muted">Sim default:</span> <b>${defAcc}%</b></div>
+          <div><span class="muted">Per-rig fine-tune:</span> <b>${prAcc}${pr?'%':''}</b></div>
+          <div><span class="muted">Delta:</span> <b style="color:${recColor}">${improv}pp</b></div>
+          <div><span class="muted">Has fine-tune:</span> ${d.has_per_rig ? '&check;' : '-'}</div>
+        </div>
+        <div class="mt-8"><span class="muted">Label distribution:</span> ${labelDist}</div>
+        <details class="mt-8">
+          <summary class="small muted">Per-class accuracy</summary>
+          <table class="mt-8" style="width:auto">
+            <thead><tr><th>Class</th><th style="text-align:right">Sim</th><th style="text-align:right">Fine-tune</th><th style="text-align:right">Support</th></tr></thead>
+            <tbody>${perClassRows}</tbody>
+          </table>
+        </details>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--red)">Error: ${e.message || e}</div>`;
+  }
+}
+
+async function lookupEwon() {
+  const name = document.getElementById('fleetLookupName').value.trim();
+  if (!name) return;
+  const res = document.getElementById('fleetLookupResult');
+  const match = _fleetDevices.find(d =>
+    d.ewon_name.toLowerCase() === name.toLowerCase() ||
+    d.ewon_name.toLowerCase().replace(/[^a-z0-9]+/g,'_').includes(
+      name.toLowerCase().replace(/[^a-z0-9]+/g,'_'))
+  );
+  if (match) {
+    res.innerHTML = `
+      <div style="padding:10px;background:var(--bg);border-radius:6px;border-left:3px solid var(--green)">
+        <b>${match.ewon_name}</b><br>
+        <span class="muted">Customer:</span> ${match.customer}<br>
+        <span class="muted">Equipment:</span> ${match.spec.display_name} (<code>${match.equipment_type}</code>)<br>
+        <span class="muted">PLC:</span> ${match.spec.plc_type}<br>
+        <span class="muted">HP / Gear / Torque / RPM:</span> ${match.spec.horsepower} / ${match.spec.gear_ratio}:1 / ${match.spec.max_torque_ft_lbs.toLocaleString()} ft-lbs / ${match.spec.max_rpm} RPM<br>
+        <span class="muted">Profile:</span> ${match.profile_file || '(no profile yet)'}<br>
+        <span class="muted">Status:</span> ${match.status}
+      </div>`;
+  } else {
+    res.innerHTML = `<div style="padding:10px;background:var(--bg);border-radius:6px;border-left:3px solid var(--yellow)">No match for "${name}". Load the full fleet table above to browse.</div>`;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
 // Alarms
 // ═════════════════════════════════════════════════════════════════
 function addAlarm(a) {
@@ -1292,9 +1983,12 @@ function toast(msg, kind = 'info') {
 // ═════════════════════════════════════════════════════════════════
 // Boot
 // ═════════════════════════════════════════════════════════════════
-connectWS();
-loadAudit();
-setInterval(loadAudit, 30000);
+(async () => {
+  await ensureAuth();
+  connectWS();
+  loadAudit();
+  setInterval(loadAudit, 30000);
+})();
 </script>
 </body>
 </html>

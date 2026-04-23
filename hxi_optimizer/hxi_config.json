@@ -1,6 +1,6 @@
 {
   "plc_host": "127.0.0.1",
-  "plc_port": 5020,
+  "plc_port": 502,
   "unit_id": 1,
   "modbus_timeout": 2.0,
   "read_start_addr": 6599,
@@ -21,5 +21,6 @@
   "osc_enabled": false,
   "drill_depth_ft": 3000.0,
   "pdm_motor_constant": null,
-  "require_verified_word_order": false
+  "require_verified_word_order": true,
+  "ewon_name": "Panther Rig 2"
 }

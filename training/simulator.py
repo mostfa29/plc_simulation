@@ -41,6 +41,17 @@ class SimConfig:
     noise_floor_60: float = 1.5
     noise_floor_120: float = 0.75
     noise_floor_180: float = 0.4
+    # Torque model — matches what the real CPE305 delivered_torque register
+    # reports (reaction torque on the output shaft, derived from pump flow
+    # and pressure, not a simple error signal). Units: ft-lbs.
+    torque_static_load_ftlbs: float = 800.0   # baseline formation reaction
+    torque_viscous_coef: float = 3.0          # drag proportional to RPM
+    torque_inertia_coef: float = 40.0         # J * dω/dt scaling
+    torque_noise_frac: float = 0.04           # sensor noise as fraction of mean
+    # Thermal model — oil heat-soak from hydraulic duty cycle
+    ambient_temp_c: float = 18.0
+    thermal_tau_s: float = 300.0              # heat-soak time constant (~5min)
+    temp_rise_at_full_duty_c: float = 45.0    # 63 °C steady-state at full load
 
 
 class HydraulicTopDriveSimulator:
@@ -51,12 +62,13 @@ class HydraulicTopDriveSimulator:
     def __init__(self, config: SimConfig | None = None):
         self.cfg = config or SimConfig()
         self.rpm = 0.0
+        self.prev_rpm = 0.0
         self.swash_command = self.cfg.swash_mid
         self.integral = 0.0
         self.prev_error = 0.0
         self.lower = self.cfg.default_lower
         self.upper = self.cfg.default_upper
-        self.loop_temp = 50.0
+        self.loop_temp = float(self.cfg.ambient_temp_c)
         self.torque = 0.0
         self.seq = 0
         self.time_s = 0.0
@@ -99,6 +111,7 @@ class HydraulicTopDriveSimulator:
                          * c.eta_vol)
         target_rpm = flow_cc_per_s / c.motor_cc * 60 * np.sign(swash_frac) / c.gear_ratio
         alpha = dt / (c.tau_hydraulic_s + dt)
+        self.prev_rpm = self.rpm
         self.rpm += alpha * (target_rpm - self.rpm)
         self.rpm += disturbance
 
@@ -106,13 +119,33 @@ class HydraulicTopDriveSimulator:
         noise = self._rng.normal(0, self._noise_std(setpoint))
         measured_rpm = self.rpm + noise
 
-        # Torque model
-        self.torque = (abs(error) * 50 + torque_load
-                       + self._rng.normal(0, 30))
+        # Torque model — matches how the real PLC's delivered_torque register
+        # responds: reaction torque on the output shaft, composed of static
+        # formation load + inertial component during acceleration + viscous
+        # damping + small sensor noise. NOT an error signal (which was the
+        # old model — broke sim-to-real transfer because real torque doesn't
+        # spike with PID error, only with actual shaft load).
+        rpm_dot = (self.rpm - self.prev_rpm) / dt
+        static_load = c.torque_static_load_ftlbs + torque_load
+        tau_inertia = c.torque_inertia_coef * rpm_dot
+        tau_viscous = c.torque_viscous_coef * self.rpm
+        tau_measured = static_load + tau_inertia + tau_viscous
+        # Multiplicative sensor noise (proportional to reading, as real
+        # pressure transducers behave)
+        sensor_noise = self._rng.normal(0, abs(tau_measured)
+                                         * c.torque_noise_frac + 5.0)
+        self.torque = tau_measured + sensor_noise
 
-        # Temperature drift (slow)
-        self.loop_temp += self._rng.normal(0, 0.02)
-        self.loop_temp = np.clip(self.loop_temp, 20, 95)
+        # Thermal model — oil heat-soak from hydraulic duty cycle. Steady-
+        # state temp rises with swash activity; relaxes toward ambient when
+        # idle. First-order lag with τ ≈ 5 min, so a 40-sample (20 s) window
+        # sees a meaningful slice of the warm-up trajectory.
+        duty = abs(swash_frac)                         # 0..1 current duty
+        t_ss = c.ambient_temp_c + c.temp_rise_at_full_duty_c * duty ** 2
+        thermal_alpha = dt / (c.thermal_tau_s + dt)
+        self.loop_temp += thermal_alpha * (t_ss - self.loop_temp)
+        self.loop_temp += self._rng.normal(0, 0.05)    # sensor jitter
+        self.loop_temp = float(np.clip(self.loop_temp, 10, 95))
 
         self.heartbeat = (self.heartbeat + 1) % 65536 if self.seq % 10 == 0 else self.heartbeat
         self.time_s += dt
@@ -128,7 +161,7 @@ class HydraulicTopDriveSimulator:
             "ss_setpoint_rev": float(-setpoint),
             "active_lower": self.lower,
             "active_upper": self.upper,
-            "delivered_torque": float(max(0, self.torque)),
+            "delivered_torque": float(max(0.0, self.torque)),
             "pid_state": 1,
             "bump_fwd_set": 0,
             "bump_rev_set": 0,
@@ -147,8 +180,10 @@ class HydraulicTopDriveSimulator:
 
     def reset(self) -> None:
         self.rpm = 0.0
+        self.prev_rpm = 0.0
         self.integral = 0.0
         self.prev_error = 0.0
         self.swash_command = self.cfg.swash_mid
+        self.loop_temp = float(self.cfg.ambient_temp_c)
         self.seq = 0
         self.time_s = 0.0

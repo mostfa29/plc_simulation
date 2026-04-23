@@ -1,0 +1,19 @@
+{
+  "current_ewon_name": "Panther Rig 2",
+  "current_plc_ip": "127.0.0.1",
+  "session_start": 1776882899.8237405,
+  "history": {
+    "panther rig 2": {
+      "ewon_name": "Panther Rig 2",
+      "equipment_type": "hxi_relay",
+      "customer": "Panther",
+      "plc_ip": "127.0.0.1",
+      "first_seen": 1776882899.8237405,
+      "last_seen": 1776884406.8648732,
+      "connection_count": 1,
+      "total_uptime_s": 0.0
+    }
+  },
+  "events": [],
+  "_saved_at": 1776884406.8654904
+}

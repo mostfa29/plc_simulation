@@ -1,12 +1,8 @@
-# HXI Smart Slide Adaptive PID Optimizer
+# `hxi_optimizer/` — Production service package
 
-Production supervisory service for the TESCO 250T HXI 800HP top drive
-(GE CPE305 PLC, eWon Flexy 205 VPN). Implements the architecture in
-[MASTER_CONTEXT_FOR_CLAUDE_CODE.md](../MASTER_CONTEXT_FOR_CLAUDE_CODE.md).
+Single-process asyncio optimizer for TESCO 250T HXI 800HP top drives. This is the deployable. `training/` and `local_test/` are not needed at runtime.
 
-Built-from-scratch replacement for the legacy capture/ML pipeline that existed
-in the repo. The old code did not have a safety gate, wrote nothing to the PLC,
-and decoded FLOAT32 with the wrong byte order.
+See repo root docs for the full picture: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), [../docs/SAFETY.md](../docs/SAFETY.md), [../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
 
 ---
 
@@ -14,186 +10,158 @@ and decoded FLOAT32 with the wrong byte order.
 
 ```
 hxi_optimizer/
-├── main.py                     asyncio entry point — 5-task gather:
-│                                 read / heartbeat / analysis / conn / dashboard
-├── hxi_config.py               Config / Phase / SafetyLimitsConfig dataclasses
-├── hxi_config.template.json    copy to hxi_config.json and fill in
+├── main.py                      ← asyncio entry point, 5-task gather
+├── hxi_config.py                ← Config + Phase + SafetyLimitsConfig dataclasses
+├── hxi_config.template.json     ← copy to hxi_config.json, fill in, restart
 │
 ├── comms/
-│   ├── modbus_client.py        AsyncModbusTcpClient wrapper (FC03 + FC16 only)
-│   ├── register_map.py         GE register addresses + FLOAT32 word-order gate
-│   └── register_scanner.py     Parse Register_List.xlsx into a RegisterCatalog
+│   ├── modbus_client.py         AsyncModbusTcpClient wrapper (FC03 + FC16 only)
+│   ├── opcua_transport.py       Alternate transport (Python 3.11 only)
+│   ├── transport.py             Factory — picks modbus or opcua from config
+│   ├── register_map.py          GE register addresses + FLOAT32 word-order gate
+│   ├── register_scanner.py      Parse Register_List.xlsx into a RegisterCatalog
+│   ├── fleet.py                 Equipment catalog (HXI / HXI HT / Warrior / ...)
+│   ├── machine_registry.py      Loads profiles/ + catalog, returns MachineRecord
+│   ├── profiles/                Per-rig register maps (YAML)
+│   └── ecatcher.py              Talk2m API + log parser + adapter scan
 │
 ├── control/
-│   ├── safety_gate.py          9-layer SafetyGate — SOLE write path
-│   ├── pid_advisor.py          Gain-scheduled bounds + sign-based integral trim
-│   └── oscillation_tuner.py    Bump-angle advisor (Phase D only)
+│   ├── safety_gate.py           9-layer SafetyGate — SOLE write path
+│   ├── pid_advisor.py           Bounds advisor + integral trim
+│   └── oscillation_tuner.py     Bump-angle advisor (Phase D only)
 │
 ├── monitoring/
-│   └── performance_metrics.py  DNIAE, CUSUM, ACF classifier, saturation analysis
+│   └── performance_metrics.py   DNIAE, CUSUM, ACF fallback classifier,
+│                                 ONNX classifier + AE, thread-safe model swap
 │
-├── io_logging/                 NOT `logging/` (stdlib shadow avoidance)
-│   ├── csv_logger.py           Background-thread CSV, 5 s fsync
-│   └── audit_logger.py         Per-write fsync audit trail
+├── intelligence/
+│   ├── diagnosis.py             Rule-based diagnoses from metrics
+│   ├── trend_analyzer.py        Multi-day patterns from CSV logs
+│   ├── fleet_triage.py          Rank rigs by attention score
+│   ├── digest.py                Plain-language "what's happening now"
+│   ├── model_registry.py        Per-rig model discovery + resolution
+│   └── compare_models.py        A/B compare default vs per-rig on real data
+│
+├── io_logging/                  NOT `logging/` (stdlib shadow avoidance)
+│   ├── csv_logger.py            Crash-safe CSV, 5 s fsync
+│   ├── audit_logger.py          Per-write fsync audit
+│   └── realtime_dataset.py      Operator-labeled episode capture
 │
 ├── state/
-│   └── persistence.py          Atomic JSON writes: tmp → fsync → rename
+│   ├── persistence.py           Atomic JSON (tmp → fsync → rename)
+│   └── machine_state.py         Per-machine uptime + event history
 │
-├── dashboard/                  Operator UI (FastAPI + WebSocket)
-│   ├── server.py               Runs as 5th asyncio task
-│   └── static/index.html       Single-page dashboard, no build step
+├── dashboard/
+│   ├── server.py                FastAPI + WebSocket + auth + audit + timeouts
+│   └── static/index.html        SPA, no build step, localStorage token
 │
 ├── deploy/
-│   ├── commissioning_tests.py  Phase A tests 1–4 (byte order, FC16, VPN, noise)
-│   ├── install_service.bat     NSSM Windows Service installer
+│   ├── commissioning_tests.py   Phase A tests (byte order, FC16, bounds)
+│   ├── install_service.bat      NSSM Windows Service installer
 │   ├── uninstall_service.bat
-│   └── windows_hardening.ps1   Power plan + Defender + Windows Update
+│   └── windows_hardening.ps1    Power plan + firewall + service user
 │
-├── logs/                       runtime CSVs, audit.log, optimizer.log
-└── tests/                      1,065 parametrized pytest tests (~18 s)
+├── models/                      ← deployed ONNX pair (default + per-rig)
+│   ├── classifier.onnx
+│   ├── classifier_meta.json
+│   ├── autoencoder.onnx
+│   ├── autoencoder_meta.json
+│   └── per_rig/<slug>/          ← fine-tuned models, never overwrite default
+│
+├── logs/                        ← writable at runtime
+│   ├── optimizer.log
+│   ├── audit.log                ← per-write fsync; safety trail
+│   ├── drill_<epoch>.csv
+│   └── dataset/                 ← captured real episodes for fine-tuning
+│
+└── tests/                       ← 2,145 tests across 22 files
 ```
 
 ---
 
-## Bring-up sequence
+## Run
 
-Follow this order. Steps gate on each other — the system refuses to start if
-prerequisites are missing.
-
-### 1. Install dependencies (Python 3.11+)
 ```bash
-pip install pymodbus==3.13.* numpy psutil fastapi uvicorn openpyxl paramiko pytest pytest-asyncio
-```
-
-### 2. Configure
-```bash
-cp hxi_optimizer/hxi_config.template.json hxi_optimizer/hxi_config.json
-# Edit:
-#   - plc_host: eWon VPN IP of the PLC
-#   - safety.abs_min/max_lower/upper: FROM STEVE'S SIGN-OFF
-#   - drill_depth_ft: current well depth
-```
-
-### 3. Commission the byte order (blocks startup)
-```bash
-python -m hxi_optimizer.deploy.commissioning_tests --test byte_order --host <PLC_IP>
-```
-Test 1 writes 1234.5 to spare %R06630 and determines whether the PLC uses
-ABCD (big-endian, §3.4 of spec) or CDAB (low-word-first, legacy assumption).
-
-**Commit the result** into [comms/register_map.py](comms/register_map.py):
-```python
-VERIFIED_WORD_ORDER = "ABCD"   # or "CDAB" — from test result
-```
-Until this constant is set, every float decode raises `RuntimeError`.
-
-### 4. Run remaining commissioning tests
-```bash
-python -m hxi_optimizer.deploy.commissioning_tests --test all --host <PLC_IP>
-```
-- **Test 2** (FC16 atomicity): 1,000 paired writes to spare registers, checks
-  for cross-faults. Must be zero.
-- **Test 3** (VPN latency): 100 reads, records mean / P95 / P99.
-- **Test 4** (noise floor): 60 s at steady RPM, measures σ. Used to set
-  `deadband_rpm` in config.
-
-### 5. Phase A — observer mode (24 h+)
-```bash
+# Local against simulated PLC (Terminal 1: python -m local_test.sim_plc)
 python -m hxi_optimizer.main
-```
-Dashboard auto-starts at http://localhost:8420. System reads at 2 Hz, logs
-to CSV, never writes to the PLC. Collect 24 h+ of data at multiple operating
-points (RPM × pressure × depth combinations).
 
-### 6. Phase B — advisory mode
-Edit `hxi_config.json`: `"phase": "B"`. Optimizer now computes recommended
-bounds every 10 s and logs them as `[ADVISORY] bounds=[L,U] DNIAE=X mode=Y`.
-Still no writes. Drilling engineer reviews advisory log for correctness.
-
-### 7. Phase C — limited authority (requires sign-off)
-All 25 items in MASTER_CONTEXT §13 must be signed before Phase C. SafetyGate
-then permits writes via FC16 with full rollback protection.
-
-### 8. Phase D — full authority
-After 2+ drilling stands with zero rollbacks, promote to Phase D. Gain schedule
-populated from Phase C data. Oscillation tuner writes enabled once %R06629
-interpretation is confirmed by Steve.
-
----
-
-## Service install (Windows)
-
-```cmd
-REM 1. (Once, as Admin) harden the host
-powershell -ExecutionPolicy Bypass -File deploy\windows_hardening.ps1
-
-REM 2. Install NSSM service (edit ROOT inside the .bat first)
-deploy\install_service.bat
-
-REM 3. Verify
-sc query HXIOptimizer
+# Production (Windows Service)
+sc start HXIOptimizer
 ```
 
-The service runs in Session 0, independent of user login. Restart policy:
-5 s → 30 s → 60 s exponential backoff over a 24-hour reset window. Logs go to
-`hxi_optimizer/logs/service_stdout.log` and `service_stderr.log`.
+Dashboard: `http://localhost:8420` — token prompt on first load if `dashboard_token` is set in config.
 
 ---
 
-## Operator dashboard
-
-http://localhost:8420 (or LAN access on the rig PC's IP).
-
-**Cards:**
-- **Live Telemetry** — RPM, setpoint, error, swash position bar, temperature
-- **Performance** — DNIAE, failure mode, saturation bars, windup/change flags
-- **Safety Gate** — state machine, rejection count, heartbeat, cooldown, LKG
-- **Adaptation** — trim upper/lower, dwell timer, total adaptations
-- **Operator Controls** — enable/disable, phase promote, depth setter
-- **Connection** — PLC host, deadband, WebSocket health
-- **Register Scanner** — auto-loads `Register_List.xlsx`, live FC03 scan,
-  filter by section, highlights writable registers
-- **Simulation Sandbox** — pick a scenario (normal / bias / oscillation /
-  stick-slip / formation change / sluggish / windup / deadband hunting /
-  connection), run it, view labelled RPM timeline + per-window metrics
-- **Audit Trail** — last 200 safety events (WRITE/REJECTED/ROLLBACK/ESD/ACCEPTED)
-
----
-
-## Testing
+## Test
 
 ```bash
-python -m pytest hxi_optimizer/tests/ -v
+python -m pytest tests/ -q
 ```
 
-1,065 tests, ~18 s. Coverage:
+**2,145 tests, ~60 s.** Highlights:
 
-| File | Tests | Focus |
+| Suite | Count | What |
 |---|---|---|
-| test_register_map.py | 181 | FLOAT32 gate, ABCD/CDAB, encode round-trips, signed int16, ESD bits |
-| test_safety_gate.py | 169 | All 9 layers, state machine, accept/reject, rollback, LKG |
-| test_edge_cases.py | 138 | All 28 register positions, bit patterns, extremes, audit stress |
-| test_safety_gate_extended.py | 119 | Boundary ±1 matrix, rate-limiter matrix, state transitions |
-| test_oscillation_tuner.py | 83 | K, f₁, resonance ±20%, reactive torque, adaptation |
-| test_performance_metrics.py | 81 | CUSUM, filter, DNIAE, classification, saturation, windup |
-| test_performance_extended.py | 75 | CUSUM sensitivity, filter numerics, saturation eps boundaries |
-| test_pid_advisor.py | 49 | Dead zone, dwell, expand/contract, trim projection |
-| test_modbus_client.py | 36 | safe_read/write, is_healthy, PLC restart detection |
-| test_config.py | 33 | Phase enum, config loading matrix, template dump |
-| test_loggers.py | 30 | Audit thread safety, CSV daemon, build_csv_row |
-| test_integration_extended.py | 28 | Multi-cycle accept, VPN drop, operator workflows |
-| test_persistence.py | 25 | Atomic write, .bak rotation, corrupt fallback |
-| test_integration.py | 18 | Full pipeline, ESD/bump, 5-rejection→DISABLED |
+| `test_safety_gate*.py` | ~400 | All 9 gate layers + state machine |
+| `test_pid_advisor.py` | ~120 | Advisor logic, integral trim |
+| `test_performance_*.py` | ~380 | DNIAE, CUSUM, saturation, anomaly detection |
+| `test_ml_classifier.py` | ~40 | ONNX inference per scenario |
+| `test_autoencoder.py` | ~30 | AE inference, threshold, separation |
+| `test_model_registry.py` | 21 | Per-rig resolution, thread-safe hot-swap |
+| `test_compare_models.py` | 13 | A/B recommend logic |
+| `test_fine_tune.py` | 16 | Dataset loading, validation gate, recalibration |
+| `test_simulator_v2.py` | 13 | Sim physics invariants |
+| `test_dashboard_prod.py` | 24 | Auth, audit, timeouts, body limits, WS |
+| `test_integration*.py` | ~120 | End-to-end with simulated PLC |
+| `test_realtime_dataset.py` | ~30 | Episode capture, auto-segmentation |
+| `test_ecatcher.py` | ~30 | Talk2m / log / adapter detection |
+| `test_equipment_coverage.py` | ~20 | Every catalog type has a spec |
+| ... | ... | ... |
+
+`-x` stops at first failure. `-v` for per-test detail.
 
 ---
 
-## Hard rules (NEVER violate)
+## Configure
 
-1. **All PLC writes go through `SafetyGate.validate_and_write()`.**
-2. **Paired writes use FC16 only.** FC06 is not exposed.
-3. **`VERIFIED_WORD_ORDER` and `SafetyLimitsConfig` defaults are `None`** — the
-   system refuses to start otherwise.
-4. **Phase < C means no writes.** `analysis_loop` only logs advisory bounds.
-5. **Do not bypass the gate for "just testing".** Use the simulator instead.
-6. **ML models never write directly.** They feed `PIDAdvisor.advise()`, which
-   feeds the gate.
+See [hxi_config.template.json](hxi_config.template.json). Minimum for first boot:
+
+```json
+{
+  "plc_host": "<ip-or-hostname>",
+  "phase": "A",
+  "safety": {
+    "abs_min_lower": <from-commissioning>,
+    "abs_max_lower": <from-commissioning>,
+    "abs_min_upper": <from-commissioning>,
+    "abs_max_upper": <from-commissioning>
+  }
+}
+```
+
+Production additions (see [../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md) for full detail):
+
+```json
+{
+  "dashboard_token": "<random-32-char>",
+  "talk2m_account": "<account>",
+  "talk2m_username": "<user>",
+  "talk2m_password": "<pass>",
+  "talk2m_developer_id": "<dev-id>",
+  "ecatcher_poll_interval_s": 30.0
+}
+```
+
+---
+
+## Invariants (do not break)
+
+1. All PLC writes go through `SafetyGate.validate_and_write()`. No other write path exists.
+2. `Phase < C` means no writes. Gate refuses.
+3. `VERIFIED_WORD_ORDER` and all `safety.abs_*` default to `None`. Service won't start until commissioning fills them in.
+4. ML never writes. Classifier + AE feed `PerformanceMetrics` → `PIDAdvisor.advise()` → gate.
+5. Per-rig fine-tunes write to `models/per_rig/<slug>/`. Default is never overwritten.
+6. Every operator action audits to `audit.log`. One durable trail for safety + ops.
+
+Full rules: [../docs/SAFETY.md](../docs/SAFETY.md).

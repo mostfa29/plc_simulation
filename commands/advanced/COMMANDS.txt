@@ -1,0 +1,145 @@
+================================================================================
+HXI OPTIMIZER — OPERATOR COMMANDS
+================================================================================
+
+Double-click any of these .bat files to run. Each one handles everything
+behind the scenes (Python setup, waits, error checks, dashboard launch).
+
+No passwords or paths needed. Just read the on-screen messages.
+
+--------------------------------------------------------------------------------
+FIRST TIME ON THIS COMPUTER (run once):
+--------------------------------------------------------------------------------
+
+  1_setup.bat
+      Installs every Python package the system needs. Takes 2-3 minutes.
+      Run this once, before anything else. Safe to re-run later.
+
+--------------------------------------------------------------------------------
+OFFLINE TESTING (no PLC, no VPN — for practice):
+--------------------------------------------------------------------------------
+
+  2_test_local.bat
+      Boots a fake PLC on your PC + the optimizer + dashboard. Opens the
+      dashboard in your browser automatically. Use this to learn the dashboard
+      and practice the operator controls without touching real equipment.
+
+      Stop with: close the command windows, or press Ctrl-C in each window.
+
+--------------------------------------------------------------------------------
+ON THE RIG (eWon VPN must be connected first):
+--------------------------------------------------------------------------------
+
+  3_commission.bat
+      Runs the 4 commissioning tests against the real PLC:
+        1. Byte order (writes 1234.5 to a spare register, reads back)
+        2. Paired-write atomicity (1000 writes to spare registers)
+        3. VPN latency (100 reads, reports mean/P95)
+        4. RPM noise floor (60s at steady speed — needs driller coordination)
+      Safe: only writes to SPARE registers, never to live swash bounds.
+      Run this the first time on a new rig, or after any PLC program change.
+
+  4_start.bat
+      Starts the optimizer in Phase A (observer only — no writes to the PLC).
+      Opens the dashboard. The optimizer reads telemetry at 2 Hz and logs
+      everything to CSV. Safe to leave running for days.
+
+  5_stop.bat
+      Stops the optimizer cleanly (persists state, closes log files).
+
+  6_status.bat
+      Shows whether the optimizer is running, the last 30 log lines, and
+      the current connection health. Use this to check on things quickly.
+
+  7_dashboard.bat
+      Just opens the dashboard in your browser. (The optimizer must already
+      be running — if not, run 4_start.bat first.)
+
+  8_logs.bat
+      Opens a live-tailing view of the optimizer log file. Use this to
+      watch everything that's happening in real time.
+
+  9_backup.bat
+      Zips up all CSV data, audit logs, and state files into a timestamped
+      backup ZIP in your Documents folder. Do this before major changes
+      or at end of shift.
+
+--------------------------------------------------------------------------------
+SERVICE MODE (runs 24/7, survives reboots — run once as Administrator):
+--------------------------------------------------------------------------------
+
+  A_install_service.bat    Install optimizer as a Windows Service (NSSM)
+  B_service_start.bat      Start the service
+  C_service_stop.bat       Stop the service
+  D_service_status.bat     Is it running? When did it start?
+  E_uninstall_service.bat  Remove the service entirely
+
+--------------------------------------------------------------------------------
+QUICK TROUBLESHOOTING
+--------------------------------------------------------------------------------
+
+"Can't connect to PLC"
+    - Check eCatcher shows a green tunnel
+    - Run 6_status.bat to see the last error
+    - Verify your config with X_show_config.bat
+
+"Dashboard won't open"
+    - Run 6_status.bat to confirm optimizer is running
+    - Try http://localhost:8420 manually in a browser
+    - If using another computer: http://<this-pc-ip>:8420
+
+"Commissioning test failed"
+    - Look at the RED error message in the window — it tells you which step
+    - Most common cause: eWon in tag-mode instead of VPN routing mode
+    - Call Moe if you're stuck
+
+"Optimizer won't start"
+    - Open config with X_show_config.bat
+    - The error message at startup tells you exactly what's missing
+    - Most common: safety limits are still "null" — see X_edit_config.bat
+
+--------------------------------------------------------------------------------
+CONFIG TOOLS
+--------------------------------------------------------------------------------
+
+  X_show_config.bat     Prints the current config (no changes)
+  X_edit_config.bat     Opens hxi_config.json in Notepad to edit safely
+  X_set_phase.bat       Changes operating phase (A/B/C/D) with confirmation
+
+--------------------------------------------------------------------------------
+OPERATING PHASES (in order of trust)
+--------------------------------------------------------------------------------
+
+  Phase A — Observer. Reads telemetry, logs everything. No writes. (DEFAULT)
+  Phase B — Advisory. Computes recommended bounds, logs them. Still no writes.
+  Phase C — Limited writes. Only after the 25-item sign-off sheet is complete.
+  Phase D — Full authority. Only after 2+ successful drilling stands in C.
+
+Never promote to C or D without written approval. The dashboard will ask
+for confirmation but it's your responsibility to verify the sign-off.
+
+--------------------------------------------------------------------------------
+WHAT HAPPENS IN AN EMERGENCY
+--------------------------------------------------------------------------------
+
+ESD pressed on the rig:
+  The optimizer detects %R06665 bit 0, freezes all writes, flashes red in
+  the dashboard. No operator action needed — it unfreezes automatically
+  when the ESD clears.
+
+You see something you don't like:
+  Open the dashboard → Controls tab → click "Disable Adaptive"
+  The state changes to DISABLED and no more writes happen.
+  Re-enable the same way after you've investigated.
+
+Computer crashed or rebooted:
+  The Windows Service (if installed) starts the optimizer automatically.
+  Last Known Good bounds are restored from state.json on boot.
+  If the service isn't installed, run 4_start.bat again.
+
+Completely stuck:
+  5_stop.bat                 # Stop the optimizer
+  9_backup.bat               # Back up everything first
+  Call Moe.
+
+================================================================================
