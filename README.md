@@ -50,17 +50,19 @@ Authoritative specs (keep for reference, don't edit without reason):
 
 Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the overview. Every subsystem has its own page:
 
-| Topic | Doc |
-|---|---|
-| System components + data flow | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Safety gate, phase plan, invariants | [docs/SAFETY.md](docs/SAFETY.md) |
-| NSSM install, config, auth setup | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
-| Day-to-day operation (Steve) | [docs/OPERATION.md](docs/OPERATION.md) |
-| Sim → train → fine-tune → deploy | [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md) |
-| Dashboard endpoints, auth, WebSocket | [docs/DASHBOARD.md](docs/DASHBOARD.md) |
-| Fleet catalog, register maps, eCatcher, per-rig models | [docs/FLEET.md](docs/FLEET.md) |
-| Adding scenarios, diagnosis rules, retraining | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
-| Common issues + fixes | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
+| Topic | Doc | Audience |
+|---|---|---|
+| System components + data flow | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Engineers |
+| Safety gate, phase plan, invariants | [docs/SAFETY.md](docs/SAFETY.md) | Engineers |
+| NSSM install, config, auth setup | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | IT / installer |
+| Day-to-day operation (Steve) | [docs/OPERATION.md](docs/OPERATION.md) | Steve |
+| **Test procedure for Steve's team (step-by-step)** | **[docs/TESTING.md](docs/TESTING.md)** | **Crew + IT** |
+| **Pin-near-the-PC quick reference** | **[docs/OPERATOR_QUICK_REFERENCE.md](docs/OPERATOR_QUICK_REFERENCE.md)** | **Shift operators** |
+| Sim → train → fine-tune → deploy | [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md) | ML engineers |
+| Dashboard endpoints, auth, WebSocket | [docs/DASHBOARD.md](docs/DASHBOARD.md) | Engineers |
+| Fleet catalog, register maps, eCatcher, per-rig models | [docs/FLEET.md](docs/FLEET.md) | Steve / IT |
+| Adding scenarios, diagnosis rules, retraining | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Engineers |
+| Common issues + fixes | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | All |
 
 ---
 
