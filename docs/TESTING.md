@@ -4,6 +4,42 @@ Step-by-step verification procedure for Steve's team. Walks through every behavi
 
 **Audience**: anyone on the crew or IT — does not assume Python knowledge. The hard parts run themselves; this guide tells you what to look for.
 
+---
+
+## Quick check (2 minutes) — Dashboard "System Test" tab
+
+Before running the full procedure below, do a one-click sanity check:
+
+1. Open the dashboard at **http://localhost:8420**.
+2. Click the **System Test** tab.
+3. The battery runs automatically (~2 seconds). Each row shows green / amber / red.
+4. Click any row to expand and see *what* the check verified and, if failed, *what to do about it*.
+
+**If everything is green** — the system is healthy at this moment. You can either stop here (for a quick health check) or continue with the full procedure below for a deeper verification.
+
+**If anything is red** — fix that first using the per-row "If this needs attention" instructions, then re-run. Don't continue with the full test procedure until the System Test tab is green or only amber.
+
+**What System Test covers** (14 checks, runs server-side):
+
+- Optimizer process up + dashboard responsive
+- PLC connection healthy
+- Telemetry samples flowing at 2 Hz
+- Classifier + autoencoder loaded and inferring
+- Model files on disk + per-rig registry resolves
+- Float byte order pinned
+- Safety limits populated from commissioning
+- Phase + gate state are sensible
+- Machine identified (eCatcher / Talk2m / config hint)
+- Audit log writable
+- Real-data capture configured
+- Disk space available
+
+This panel is also useful for ongoing monitoring — re-run any time something looks off.
+
+---
+
+## Full test procedure
+
 **Format**: each test has an **ID**, **prerequisites**, **steps** (numbered), **expected result** (what you should see), and **pass/fail criteria** (what makes it green). Print this guide and check off rows as you go. A blank results table is at the bottom for sign-off.
 
 **How long**: ~3–4 hours end-to-end if everything passes. If a test fails, stop and consult [TROUBLESHOOTING.md](TROUBLESHOOTING.md) before continuing.

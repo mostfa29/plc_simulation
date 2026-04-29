@@ -18,6 +18,18 @@ This is what you need to know to use the dashboard during a shift. Everything el
 
 ---
 
+## 2-minute health check (do this once per shift)
+
+Click the **System Test** tab. The battery runs automatically and shows green / amber / red for each part of the system. Takes about 2 seconds.
+
+- **All green** → system is healthy, get on with the shift.
+- **Anything red** → click the row to read what to do. If the fix isn't obvious, call Steve.
+- **Amber rows** → the system is working but something is degraded. Read the row, fix if you can, otherwise note it and continue.
+
+You can re-run this at any time during the shift if something looks off (slow dashboard, weird numbers, suspicious noise). It's safe to run repeatedly — no PLC writes happen.
+
+---
+
 ## What the dashboard tells you
 
 | Color / state | What it means | Action |

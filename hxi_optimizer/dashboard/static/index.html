@@ -256,6 +256,7 @@ canvas { width: 100%; display: block; background: var(--bg); border-radius: 6px;
   <button class="tab" data-tab="simulation">Simulation</button>
   <button class="tab" data-tab="training">Training</button>
   <button class="tab" data-tab="diagnostics">Diagnostics</button>
+  <button class="tab" data-tab="systemtest" title="One-click system health check for non-technical users">System Test</button>
   <button class="tab" data-tab="audit">Audit <span class="count" id="auditCount">0</span></button>
   <button class="tab" data-tab="logs">Logs</button>
 </div>
@@ -829,6 +830,28 @@ python -m training.deploy --models-dir training/models
   </div>
 </div>
 
+<!-- ═══════════ SYSTEM TEST ═══════════ -->
+<div class="panel" id="panel-systemtest">
+  <div class="card">
+    <h2><span class="icon">&#9989;</span>System Test
+      <div class="card-header-actions">
+        <button class="btn primary" onclick="runSystemTest()" id="systemTestBtn">Run System Test</button>
+      </div>
+    </h2>
+    <p class="small muted">
+      One-click verification that every part of the system is working as expected. Click "Run System Test" — each check turns green / amber / red within a couple of seconds. Click any row for the full explanation and what to do if it failed. Safe to run any time; no PLC writes happen.
+    </p>
+    <div id="systemTestSummary" class="mt-12" style="display:none">
+      <div id="systemTestBanner" style="padding:14px;border-radius:6px;margin-bottom:12px;font-size:14px"></div>
+    </div>
+    <div id="systemTestRows" class="mt-12">
+      <div class="muted small" style="padding:20px;text-align:center">
+        Click <b>Run System Test</b> above to start. Takes about 2 seconds.
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ AUDIT ═══════════ -->
 <div class="panel" id="panel-audit">
   <div class="card">
@@ -956,6 +979,10 @@ function switchTab(name) {
   if (name === 'intel') loadIntel();
   if (name === 'diagnostics') { loadDiagnostics(); loadConfig(); }
   if (name === 'logs') loadLogs();
+  if (name === 'systemtest' && !window._systemTestRanOnce) {
+    window._systemTestRanOnce = true;
+    runSystemTest();
+  }
 }
 // Restore last tab
 const savedTab = localStorage.getItem('hxi_tab');
@@ -1523,6 +1550,98 @@ const STATE_COLORS = {
   ATTEND: 'var(--red)', CAUTION: 'var(--orange)',
   WATCH: 'var(--yellow)', NORMAL: 'var(--green)',
 };
+
+// ═════════════════════════════════════════════════════════════════
+// System Test (one-click health-check battery for non-technical users)
+// ═════════════════════════════════════════════════════════════════
+const _STATUS_STYLE = {
+  pass: { color: 'var(--green)', icon: '&#10004;', label: 'PASS' },
+  fail: { color: 'var(--red)',   icon: '&#10006;', label: 'FAIL' },
+  warn: { color: 'var(--amber)', icon: '&#9888;',  label: 'WARN' },
+  skip: { color: 'var(--dim)',   icon: '&#9898;',  label: 'SKIP' },
+};
+
+async function runSystemTest() {
+  const btn = document.getElementById('systemTestBtn');
+  const rowsEl = document.getElementById('systemTestRows');
+  const summaryEl = document.getElementById('systemTestSummary');
+  btn.disabled = true;
+  btn.textContent = 'Running...';
+  rowsEl.innerHTML = '<div class="muted small" style="padding:20px;text-align:center">Running ~14 checks...</div>';
+  summaryEl.style.display = 'none';
+
+  const data = await apiCall('GET', '/api/selftest');
+  btn.disabled = false;
+  btn.textContent = 'Run System Test';
+  if (!data) {
+    rowsEl.innerHTML = '<div style="padding:14px;color:var(--red)">Failed to reach the server. Is the optimizer running?</div>';
+    return;
+  }
+  _renderSystemTestSummary(data, summaryEl);
+  _renderSystemTestRows(data.tests, rowsEl);
+}
+
+function _renderSystemTestSummary(data, el) {
+  const overall = data.overall || 'fail';
+  const style = _STATUS_STYLE[overall];
+  const s = data.summary;
+  const verdict = {
+    pass: 'All checks passed. System is healthy.',
+    warn: 'Mostly OK but some warnings — system functional, see amber rows.',
+    fail: 'One or more critical checks failed. See red rows below.',
+  }[overall];
+  el.style.display = 'block';
+  document.getElementById('systemTestBanner').innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px;border-left:4px solid ${style.color};background:var(--bg);padding:12px 14px;border-radius:4px">
+      <div style="font-size:24px;color:${style.color}">${style.icon}</div>
+      <div style="flex:1">
+        <div style="font-weight:600;color:${style.color};font-size:15px">${style.label} &middot; ${verdict}</div>
+        <div class="small muted mt-4">
+          ${s.passed} passed &middot; ${s.failed} failed &middot; ${s.warnings} warnings &middot; ${s.skipped} skipped &middot; ${data.elapsed_ms}ms
+        </div>
+      </div>
+    </div>`;
+}
+
+function _renderSystemTestRows(tests, el) {
+  el.innerHTML = '';
+  // Order: failed first, then warn, then pass, then skip — operator sees what needs attention first
+  const order = { fail: 0, warn: 1, pass: 2, skip: 3 };
+  const sorted = [...tests].sort((a, b) => (order[a.status] - order[b.status]));
+  for (const t of sorted) {
+    const style = _STATUS_STYLE[t.status] || _STATUS_STYLE.skip;
+    const row = document.createElement('div');
+    row.style.cssText = `border:1px solid var(--border);border-left:4px solid ${style.color};border-radius:4px;margin-bottom:8px;background:var(--bg)`;
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;gap:12px;padding:10px 12px;cursor:pointer;user-select:none';
+    header.innerHTML = `
+      <div style="font-size:18px;color:${style.color};min-width:24px;text-align:center">${style.icon}</div>
+      <div style="flex:1">
+        <div style="font-weight:600">${t.name}</div>
+        <div class="small muted">${t.detail || ''}</div>
+      </div>
+      <div class="small" style="color:${style.color};font-weight:600;letter-spacing:1px">${style.label}</div>
+      <div class="small muted" id="caret-${t.id}">&#9656;</div>`;
+    const body = document.createElement('div');
+    body.style.cssText = 'display:none;padding:0 12px 12px 50px;font-size:13px';
+    let bodyHtml = `<div class="small muted" style="margin-bottom:8px"><b>What this checks:</b> ${t.description}</div>`;
+    if (t.what_to_do) {
+      bodyHtml += `<div style="padding:10px;background:var(--bg-alt,#f8f8f8);border-radius:4px;border-left:3px solid ${style.color}">
+        <div class="small" style="color:${style.color};font-weight:600;margin-bottom:4px">If this needs attention</div>
+        <div class="small">${t.what_to_do}</div>
+      </div>`;
+    }
+    body.innerHTML = bodyHtml;
+    header.onclick = () => {
+      const open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      document.getElementById(`caret-${t.id}`).innerHTML = open ? '&#9656;' : '&#9662;';
+    };
+    row.appendChild(header);
+    row.appendChild(body);
+    el.appendChild(row);
+  }
+}
 
 async function loadIntel() {
   // Run all three endpoints in parallel

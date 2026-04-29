@@ -285,6 +285,21 @@ def create_app(shared: dict) -> FastAPI:
     async def api_auth_status():
         return {"auth_enabled": _configured_token(shared) is not None}
 
+    # ─── System self-test battery (for non-technical operators) ────────
+    @app.get("/api/selftest")
+    async def api_selftest():
+        """Run the full system health-check battery.
+
+        Returns pass/fail/warn for each check + plain-language explanation
+        of what to do if it fails. Used by the dashboard "System Test" tab
+        so non-technical operators can verify the system without running
+        pytest from a terminal.
+
+        Read-only; safe to run at any time. ~12 checks, <500 ms.
+        """
+        from hxi_optimizer.dashboard.selftest import run_self_tests
+        return run_self_tests(shared)
+
     # ─── Snapshot REST endpoint (for initial load / polling fallback) ───
     @app.get("/api/status")
     async def api_status():
