@@ -40,8 +40,13 @@ class TestTorqueModel:
         damping). Without this, the model can't distinguish drill-through
         RPM regimes.
         """
+        # Default bounds [350, 650] cap effective RPM at ~35 — both sims
+        # would settle near the same speed and the viscous term gets eaten
+        # by sensor noise. Widen bounds so 30 and 100 RPM are both reachable.
         sim1 = HydraulicTopDriveSimulator(SimConfig())
+        sim1.set_bounds(100, 900)
         sim2 = HydraulicTopDriveSimulator(SimConfig())
+        sim2.set_bounds(100, 900)
         for _ in range(300):
             sim1.step(30.0)
             sim2.step(100.0)
