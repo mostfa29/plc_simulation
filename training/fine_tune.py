@@ -186,18 +186,14 @@ def evaluate_model(model, X: np.ndarray, y: np.ndarray, device,
 def fine_tune_classifier(rig_filter: str, mix_sim_ratio: float,
                          epochs: int, lr: float, seed: int,
                          deploy: bool) -> dict:
-    """Run the full fine-tune pipeline. Returns a result dict with metrics."""
-    import torch
-    import torch.nn as nn
-    import torch.nn.functional as F
-    from sklearn.model_selection import train_test_split
+    """Run the full fine-tune pipeline. Returns a result dict with metrics.
 
-    sys.path.insert(0, str(REPO_ROOT))
-    from training.train_classifier_torch import FailureModeClassifier
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # ── 1. Load real episodes ──────────────────────────────────────
+    Heavy training-side imports (torch, sklearn) are deferred until AFTER
+    the "not enough data" early-return so this function can be probed from
+    a deploy-only machine that doesn't have torch/sklearn installed —
+    callers and tests get a clean ok=False without a ModuleNotFoundError.
+    """
+    # ── 1. Load real episodes (no training deps needed) ────────────
     X_real, y_real, machines, stats = load_real_episodes(rig_filter)
     if len(X_real) < 100:
         return {
@@ -208,6 +204,17 @@ def fine_tune_classifier(rig_filter: str, mix_sim_ratio: float,
                         f"'Annotate' buttons during normal drilling."),
             "real_stats": vars(stats),
         }
+
+    # From here on we actually train — torch + sklearn are required.
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    from sklearn.model_selection import train_test_split
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from training.train_classifier_torch import FailureModeClassifier
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Real dataset: {len(X_real)} windows from {stats.n_episodes} "
                 f"episodes across {len(stats.by_machine)} machines")
     logger.info(f"  by label: {stats.by_label}")
@@ -515,11 +522,12 @@ def recalibrate_ae_threshold(rig_filter: str, deploy: bool) -> dict:
     Sim-trained AE often produces too-low thresholds on real data, causing
     constant false positives. This sets the threshold to mean+3σ of the
     REAL NORMAL reconstruction errors.
-    """
-    import torch
-    sys.path.insert(0, str(REPO_ROOT))
-    from training.train_autoencoder_torch import ConvAutoencoder
 
+    Heavy imports deferred past the early-return paths so a deploy-only
+    machine (no torch installed) can still probe this function and get a
+    clean ok=False instead of a ModuleNotFoundError.
+    """
+    # Early returns first — no torch needed for these paths
     sim_ae_path = SIM_AE_DIR / "model.pt"
     if not sim_ae_path.exists():
         return {"ok": False, "reason": f"sim AE checkpoint not at {sim_ae_path}"}
@@ -532,6 +540,11 @@ def recalibrate_ae_threshold(rig_filter: str, deploy: bool) -> dict:
         return {"ok": False,
                 "reason": f"only {len(X_normal)} real NORMAL windows; need 50+"}
     logger.info(f"Recalibrating AE threshold on {len(X_normal)} real NORMAL windows")
+
+    # We're going to actually run the AE — torch is required from here on.
+    import torch
+    sys.path.insert(0, str(REPO_ROOT))
+    from training.train_autoencoder_torch import ConvAutoencoder
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     sim_ckpt = torch.load(sim_ae_path, map_location="cpu", weights_only=False)

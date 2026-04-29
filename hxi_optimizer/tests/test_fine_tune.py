@@ -9,9 +9,15 @@ Verifies:
   - Insufficient data returns ok=False without crashing
 
 Synthetic data is written into a tmp dataset dir to simulate real captures.
+
+Note on deployment-machine vs developer-machine: tests that exercise
+fine-tune logic transitively need torch + sklearn (training-side deps).
+On rig PCs those may not be installed — those tests skip cleanly via the
+HAS_TRAINING_DEPS marker rather than failing.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -21,6 +27,12 @@ import pytest
 import training.fine_tune as ft
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+HAS_TRAINING_DEPS = (
+    importlib.util.find_spec("torch") is not None
+    and importlib.util.find_spec("sklearn") is not None
+)
+HAS_SIM_AE_CHECKPOINT = (ft.SIM_AE_DIR / "model.pt").exists()
 
 
 def _write_episode(dataset_dir: Path, machine: str, label: str,
@@ -129,6 +141,10 @@ class TestLoadRealEpisodes:
 # ═════════════════════════════════════════════════════════════════════
 
 class TestInsufficientData:
+    """Both tests below take the early-return path inside
+    fine_tune_classifier (no training deps needed) — verifies the function
+    fails cleanly on rig PCs without torch/sklearn.
+    """
     def test_no_real_data_returns_ok_false(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ft, "DATASET_DIR", tmp_path)
         result = ft.fine_tune_classifier(
@@ -158,7 +174,13 @@ class TestAERecalibration:
         monkeypatch.setattr(ft, "DATASET_DIR", tmp_path)
         result = ft.recalibrate_ae_threshold(rig_filter="all", deploy=False)
         assert result["ok"] is False
-        assert "NORMAL" in result["reason"] or "windows" in result["reason"]
+        # Two valid early-return paths:
+        #   - "no real NORMAL windows" path (dev machine where sim
+        #     checkpoint exists but dataset is empty)
+        #   - "sim AE checkpoint not at <path>" path (rig PC where the
+        #     training/ tree isn't present, only the deployed ONNX)
+        assert any(s in result["reason"]
+                   for s in ("NORMAL", "windows", "sim AE checkpoint"))
 
     @pytest.mark.skipif(not (ft.SIM_AE_DIR / "model.pt").exists(),
                         reason="sim AE checkpoint not deployed")
