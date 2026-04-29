@@ -105,24 +105,38 @@ This panel is also useful for ongoing monitoring — re-run any time something l
 
 ---
 
-### T1.4 — Start the simulated PLC + optimizer
+### T1.4 — Start the system (one command)
 
 **Steps**:
-1. Open **Terminal A**: `python -m local_test.sim_plc`
-   - You should see `Sim PLC listening on 127.0.0.1:5020`.
-2. Open **Terminal B**: `python -m hxi_optimizer.main`
-   - Watch for log lines. Within 5 seconds you should see:
-     ```
-     === HXI Smart Slide Adaptive PID Optimizer starting ===
-     Transport: modbus (127.0.0.1:5020)
-     Connecting to PLC at 127.0.0.1:5020
-     Connection status: True
-     Dashboard starting at http://0.0.0.0:8420
-     Starting main loops (Phase A)
-     ```
+1. Open a single terminal at the repo root.
+2. Run: `python run.py --sim`
+   - The launcher spawns the simulated PLC, waits for it to bind, spawns the optimizer, polls /healthz until the dashboard is up, opens your browser.
+3. Watch for log lines. Within ~10 seconds you should see:
+   ```
+   [launcher] === HXI Optimizer launcher ===
+   [launcher] mode:           SIM
+   [launcher] starting sim PLC on 127.0.0.1:5020...
+   [launcher] sim PLC ready on 127.0.0.1:5020
+   [launcher] starting optimizer...
+   sim_plc        INFO    HXI sim PLC listening on 127.0.0.1:5020
+   main           INFO    : === HXI Smart Slide Adaptive PID Optimizer starting ===
+   main           INFO    : Transport: Modbus TCP (127.0.0.1:5020)
+   main           INFO    : Connection status: True
+   main           INFO    : Starting main loops (Phase A)
+   main           INFO    : Dashboard available at http://0.0.0.0:8420
+   [launcher] dashboard live at http://localhost:8420
+   [launcher] opened browser tab
+   ```
 
-**Pass**: Both terminals show their startup banners with no red errors.
-**Fail**: If "Port 8420 already in use" — another optimizer is running; stop it. If "Connection refused" on terminal B — terminal A didn't start; check for Python errors.
+**Pass**: All three startup phases (launcher → sim PLC ready → optimizer up) print, dashboard opens in browser, header shows **MODE: SIM** in amber.
+**Fail**:
+ - `[launcher] sim PLC didn't bind in 8s` → port 5020 already in use; pass `--sim-port 5021` to retry.
+ - `[launcher] dashboard didn't become reachable in 30s` → optimizer crashed during startup; scroll up to find the actual exception.
+ - `Port 8420 already in use` → another optimizer still running; stop it and retry.
+
+**Stopping**: Ctrl+C in the terminal — the launcher cleanly stops the optimizer and sim PLC in order.
+
+**For real-PLC mode** instead of the simulator: `python run.py --real` (uses `plc_host` from `hxi_config.json`). Header shows **MODE: REAL** in green.
 
 ---
 

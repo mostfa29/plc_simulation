@@ -236,6 +236,10 @@ canvas { width: 100%; display: block; background: var(--bg); border-radius: 6px;
   <div class="logo"><span>HXI</span> Optimizer</div>
   <div class="status-strip">
     <span class="status-item"><span class="conn-dot" id="connDot"></span><span id="connLabel">Connecting...</span></span>
+    <span class="status-item" id="modeBadgeWrap" title="Runtime mode — SIM uses the bundled simulator, REAL connects to a physical PLC">
+      <span class="label">Mode</span>
+      <span class="badge" id="modeBadge" style="background:var(--dim);color:#fff">--</span>
+    </span>
     <span class="status-item"><span class="label">Phase</span><span class="badge" id="phaseBadge">--</span></span>
     <span class="status-item"><span class="label">State</span><span class="badge" id="stateBadge">--</span></span>
     <span class="status-item"><span class="label">Transport</span><span id="transportLabel" class="small">--</span></span>
@@ -1046,6 +1050,18 @@ function applyUpdate(d) {
   pb.textContent = d.phase; pb.className = 'badge phase-' + d.phase;
   const sb = document.getElementById('stateBadge');
   sb.textContent = d.state_machine; sb.className = 'badge state-' + d.state_machine;
+  // Mode badge — green for REAL (production), amber for SIM (testing).
+  // Matters operationally: nobody should mistake sim data for real-rig data.
+  const mb = document.getElementById('modeBadge');
+  if (mb) {
+    const mode = (d.runtime_mode || 'real').toUpperCase();
+    mb.textContent = mode;
+    mb.style.background = mode === 'SIM' ? 'var(--amber)' : 'var(--green)';
+    mb.style.color = '#fff';
+    mb.title = mode === 'SIM'
+      ? 'Connected to the bundled simulator (test mode). Not real rig data.'
+      : 'Connected to a real PLC (production mode).';
+  }
   const sbb = document.getElementById('safetyStateBig');
   sbb.textContent = d.state_machine; sbb.className = 'badge state-' + d.state_machine;
   document.getElementById('transportLabel').textContent = (d.config && d.config.plc_host) ? (d.config.plc_host.split(':')[0]) : '--';

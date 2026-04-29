@@ -1250,6 +1250,7 @@ def _build_snapshot(shared: dict) -> dict:
             "connected": modbus.client.connected if modbus and hasattr(modbus, "client") else False,
         },
         "phase": config.phase.value if config else "?",
+        "runtime_mode": getattr(config, "runtime_mode", "real") if config else "real",
         "state_machine": gate.state.name if gate else "UNKNOWN",
         "bounds": {
             "current_lower": gate.current_lower if gate else 0,

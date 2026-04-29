@@ -2,6 +2,8 @@
 
 Production runs as an **NSSM Windows Service** on the rig PC. Session 0, restart-on-failure with 5 s → 30 s → 60 s backoff, logs to `hxi_optimizer/logs/service_*.log`.
 
+For testing or manual operation, the single-command launcher is `python run.py` from the repo root — see [README.md](../README.md) for the flag reference. The launcher handles SIM vs REAL mode automatically and auto-opens the browser. Service mode (below) is the production path; the launcher is for IT / testers / dev.
+
 ---
 
 ## Prerequisites

@@ -8,13 +8,25 @@ This is what you need to know to use the dashboard during a shift. Everything el
 
 ## Daily start
 
-1. Open browser to **http://localhost:8420**.
-2. Header should show:
+If the system is running as a Windows Service (production), just open `http://localhost:8420` — skip to step 4 below.
+
+If you're starting it manually (e.g. for testing): one terminal at the project folder:
+
+```powershell
+python run.py
+```
+
+That starts everything (simulator if you're testing locally, or the real PLC connection if it's configured) and opens the browser automatically. Ctrl+C in the terminal stops everything cleanly.
+
+Once the dashboard is open:
+
+1. Header should show:
    - Green dot top-left (connection OK)
+   - **MODE: SIM** (amber, testing) or **MODE: REAL** (green, production) — make sure this matches what you expect before trusting numbers
    - **PHASE: A / B / C / D** — should match what was set last shift
    - **STATE: ADAPTING / BASELINE / TRIAL / ACCEPTED** — green is good
-3. If the dot is **red** → see "Red dot" below.
-4. If the page asks for a token → enter the value Steve provided. Browser remembers it.
+2. If the dot is **red** → see "Red dot" below.
+3. If the page asks for a token → enter the value Steve provided. Browser remembers it.
 
 ---
 

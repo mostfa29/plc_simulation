@@ -8,17 +8,26 @@ Adaptive supervisory PID-bounds optimizer for **TESCO 250T HXI 800HP** top drive
 
 ---
 
-## Quick start (local, no PLC)
+## Quick start — one command
 
 ```bash
 python -m pip install -r requirements.txt   # or list below
-# Terminal 1 — simulated PLC on 127.0.0.1:5020
-python -m local_test.sim_plc
-# Terminal 2 — optimizer + dashboard
-python -m hxi_optimizer.main
+python run.py                               # auto: sim if no real PLC configured
 ```
 
-Open http://localhost:8420 → live telemetry, phase controls, simulation sandbox, A/B model compare, audit trail.
+That's it. The launcher handles everything: starts the simulated PLC if needed, starts the optimizer + dashboard, waits for `/healthz` to be green, opens your browser to `http://localhost:8420`. Ctrl+C in the terminal stops everything cleanly.
+
+The dashboard header shows a **Mode** badge: amber **SIM** when running against the bundled simulator, green **REAL** when connected to a physical PLC. Nobody mistakes test data for production data.
+
+| Command | What it does |
+|---|---|
+| `python run.py` | Auto-detect: SIM if no real `plc_host`, REAL if config has one |
+| `python run.py --sim` | Force simulator mode |
+| `python run.py --real` | Force real-PLC mode (uses `plc_host` from `hxi_config.json`) |
+| `python run.py --no-browser` | Don't auto-open the browser |
+| `python run.py --sim-port 5021` | Different sim PLC port |
+
+Or use the existing `hxi.bat` interactive menu (Windows) for a guided experience: bring-up, commissioning, configure, status, logs, backup.
 
 Run the test suite: `python -m pytest hxi_optimizer/tests/ -q` — **2,145 tests** in ~60s.
 

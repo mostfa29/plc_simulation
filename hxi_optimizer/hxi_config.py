@@ -104,6 +104,11 @@ class Config:
     dashboard_max_body_bytes: int = 1_000_000       # 1 MB POST body cap
     dashboard_max_concurrent: int = 64              # uvicorn limit_concurrency
 
+    # Runtime mode — set by the launcher (run.py) to "sim" or "real".
+    # Pure metadata; the dashboard surfaces it so operators can see at a
+    # glance whether they're talking to the simulator or a real PLC.
+    runtime_mode: str = "real"
+
     # Transport layer — "modbus" (default) or "opcua"
     transport: str = "modbus"
     # OPC UA specific (ignored when transport=="modbus")
@@ -119,18 +124,37 @@ def load_config(path: str = "hxi_config.json") -> Config:
     cfg = Config()
     if not os.path.exists(path):
         logger.warning(f"{path} not found — using built-in defaults")
-        return cfg
-    with open(path) as f:
-        data = json.load(f)
-    for k, v in data.items():
-        if k == "safety":
-            for sk, sv in v.items():
-                if hasattr(cfg.safety, sk):
-                    setattr(cfg.safety, sk, sv)
-        elif k == "phase":
-            cfg.phase = Phase(v)
-        elif hasattr(cfg, k):
-            setattr(cfg, k, v)
+    else:
+        with open(path) as f:
+            data = json.load(f)
+        for k, v in data.items():
+            if k == "safety":
+                for sk, sv in v.items():
+                    if hasattr(cfg.safety, sk):
+                        setattr(cfg.safety, sk, sv)
+            elif k == "phase":
+                cfg.phase = Phase(v)
+            elif hasattr(cfg, k):
+                setattr(cfg, k, v)
+
+    # Env-var overrides applied LAST so the launcher (run.py) can switch
+    # sim ↔ real without touching hxi_config.json on disk. Keeps the
+    # persistent config rig-specific while letting the launcher steer
+    # this particular run.
+    env_overrides = {
+        "HXI_PLC_HOST": ("plc_host", str),
+        "HXI_PLC_PORT": ("plc_port", int),
+        "HXI_RUNTIME_MODE": ("runtime_mode", str),
+        "HXI_DASHBOARD_PORT": ("dashboard_port", int),
+    }
+    for env_key, (cfg_key, caster) in env_overrides.items():
+        val = os.environ.get(env_key)
+        if val:
+            try:
+                setattr(cfg, cfg_key, caster(val))
+                logger.info(f"config override from env {env_key}={val}")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"ignoring bad {env_key}={val!r}: {e}")
     return cfg
 
 
