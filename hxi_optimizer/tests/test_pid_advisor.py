@@ -132,7 +132,13 @@ class TestDeadZone:
     def test_error_above_dead_zone_accumulates_dwell(self, advisor):
         metrics = self._make_metrics(std_pct=10.0, sat=0.5)  # 10% of 60 = 6 RPM
         advisor.state.dwell_counter = 0
-        advisor.advise(60.0, 3000.0, metrics, now=time.time())
+        # Force dt = 1.0 — without this, on Windows the clock resolution
+        # collapses (now - last_update_time) to exactly 0.0 and the
+        # increment vanishes. Other tests in this file follow the same
+        # pattern (line 168, 198, 216, 311 etc.).
+        now = time.time()
+        advisor.state.last_update_time = now - 1.0
+        advisor.advise(60.0, 3000.0, metrics, now=now)
         assert advisor.state.dwell_counter > 0
 
     def test_dwell_caps_at_3x(self, advisor):
